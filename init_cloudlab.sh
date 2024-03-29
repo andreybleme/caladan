@@ -51,13 +51,21 @@ sudo ./scripts/setup_machine.sh
 
 # install rust
 bash
-export PATH="$HOME/.cargo/bin:$PATH"
 curl https://sh.rustup.rs -sSf | sh
+export PATH="$HOME/.cargo/bin:$PATH"
 rustup default nightly
 
-# build syntetic apps (1.79.0-nightly)
-# error[E0635]: unknown feature `integer_atomics`
+# (ok) build syntetic apps (1.79.0-nightly)
 cd apps/synthetic
 cargo clean
 cargo update
 cargo build --release
+# if error[E0635]: unknown feature `integer_atomics`
+# remove line  #![feature(integer_atomics)]
+# vi src/main.rs:1:12 
+
+# (ok) start iokerneld
+sudo ./iokerneld
+sudo ./apps/synthetic/target/release/synthetic 128.110.217.196:5000 --config server.config --mode spawner-server
+# if fail, update server.config with the correct IP from $ ip a
+# vi 
