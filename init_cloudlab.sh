@@ -1,12 +1,13 @@
+# Ubuntu 18.04.1 LTS (GNU/Linux 4.15.0-169-generic x86_64)
 sudo apt-get update
 sudo apt install build-essential libnuma-dev clang autoconf autotools-dev m4 automake libevent-dev  libpcre++-dev libtool ragel libev-dev moreutils parallel cmake python3 python3-pip libjemalloc-dev libaio-dev libdb5.3++-dev numactl hwloc libmnl-dev libnl-3-dev libnl-route-3-dev uuid-dev libssl-dev libcunit1-dev pkg-config
 sudo apt install make gcc cmake pkg-config libnl-3-dev libnl-route-3-dev libnuma-dev uuid-dev libssl-dev libaio-dev libcunit1-dev libclang-dev libncurses-dev python3-pyelftools
 
-git clone https://github.com/andreybleme/caladan.git
-cd caladan
-
 # install ninja
 sudo apt install ninja-build
+
+git clone https://github.com/andreybleme/caladan.git
+cd caladan
 
 # install python 3.7+
 # Meson works correctly only with python 3.7+. You have python 3.6.9 (default, Mar 10 2023, 16:46:00)
@@ -69,3 +70,5 @@ sudo ./iokerneld
 sudo ./apps/synthetic/target/release/synthetic 128.110.217.196:5000 --config server.config --mode spawner-server
 # if fail, update server.config with the correct IP from $ ip a
 # vi 
+
+# TODO: check if client is generatig traffic and server is processing the packets properly
