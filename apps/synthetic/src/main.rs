@@ -1,4 +1,5 @@
-#![feature(integer_atomics)]
+// error[E0635]: unknown feature `integer_atomics` when using rustc 1.79.0-nightly (1684a753d 2024-04-01)
+//#![feature(integer_atomics)] 
 #![feature(nll)]
 #![feature(test)]
 #[macro_use]
