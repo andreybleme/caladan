@@ -688,8 +688,9 @@ static int sched_scan_node(int node)
 {
 	struct cpu_info *info;
 	int i, sib, nr, ret = 0;
+	int cpu_count_iok_a = cpu_count / 2;
 
-	for (i = 0; i < cpu_count; i++) {
+	for (i = 0; i < cpu_count_iok_a; i++) {
 		info = &cpu_info_tbl[i];
 		if (info->package != node)
 			continue;
@@ -734,8 +735,9 @@ int sched_init(void)
 {
 	int i;
 	bool valid = true;
+	int cpu_count_iok_a = cpu_count / 2;
 
-	bitmap_init(sched_allowed_cores, cpu_count, false);
+	bitmap_init(sched_allowed_cores, cpu_count_iok_a, false);
 
 	/*
 	 * first pass: scan and log CPUs
@@ -756,7 +758,7 @@ int sched_init(void)
 	 * second pass: determine available CPUs
 	 */
 
-	for (i = 0; i < cpu_count; i++) {
+	for (i = 0; i < cpu_count_iok_a; i++) {
 		if (cpu_info_tbl[i].package != managed_numa_node && sched_ops != &numa_ops)
 			continue;
 
@@ -785,7 +787,8 @@ int sched_init(void)
 	bitmap_clear(sched_allowed_cores, sched_ctrl_core);
 	bitmap_clear(sched_allowed_cores, sched_dp_core);
 	log_info("sched: dataplane on %d, control on %d",
-		 sched_dp_core, sched_ctrl_core);
+		 sched_dp_core, sched_ctrl_core); // data plane on 5, control on 0
+	log_info("sched: iokernel a using %d CPU", cpu_count_iok_a);
 
 	/* check if configuration disables hyperthreads */
 	if (cfg.noht) {
