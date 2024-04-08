@@ -7,12 +7,14 @@ sudo apt install make gcc cmake pkg-config libnl-3-dev libnl-route-3-dev libnuma
 sudo apt install ninja-build
 
 git clone https://github.com/andreybleme/caladan.git
+git pull
+git checkout feature/iokernels
 cd caladan
 
 # install python 3.7+
 # Meson works correctly only with python 3.7+. You have python 3.6.9 (default, Mar 10 2023, 16:46:00)
 # TODO: try to install from source code https://www.howtogeek.com/install-latest-python-version-on-ubuntu/
-scp Downloads/Python-3.12.2.tgz lbleme@ms0804.utah.cloudlab.us:/users/lbleme/
+scp Downloads/Python-3.12.2.tgz lbleme@ms0914.utah.cloudlab.us:/users/lbleme/
 tar xvf Python-3.12.2.tgz
 cd Python-3.12.2
 ./configure --enable-optimizations
@@ -36,7 +38,7 @@ sudo ln -s /users/lbleme/meson/meson.py /usr/bin/meson
 sudo apt-get install -y python3-pyelftools python-pyelftools
 pip3 install pyelftools
 
-# CONFIG_MLX4=y
+# CONFIG_MLX4=y - build/shared.mk:56: *** mlx4 support is not available currently.  Stop.
 # CONFIG_DEBUG=y
 vi build/config
 
@@ -67,8 +69,15 @@ cargo build --release
 
 # (ok) start iokerneld
 sudo ./iokerneld
-sudo ./apps/synthetic/target/release/synthetic 128.110.217.196:5000 --config server.config --mode spawner-server
+sudo ./apps/synthetic/target/release/synthetic 128.110.217.35:5000 --config server.config --mode spawner-server
 # if fail, update server.config with the correct IP from $ ip a
 # vi 
 
-# TODO: check if client is generatig traffic and server is processing the packets properly
+# update client.config
+sudo ./apps/synthetic/target/release/synthetic 128.110.217.35:5000 --config client.config --mode runtime-client
+
+# node 0 128.110.217.35/21
+# node 1 128.110.217.54/21
+
+# currrent: traffic is generated, but not processed by server
+# MLX3 is no longer supported
