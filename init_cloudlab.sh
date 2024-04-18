@@ -1,4 +1,7 @@
-# Ubuntu 18.04.1 LTS (GNU/Linux 4.15.0-169-generic x86_64)
+# Script tested on xl170 Cloudlab machine (https://docs.cloudlab.us/hardware.html)
+
+# Ubuntu 22.04.2 LTS (GNU/Linux 5.15.0-86-generic x86_64)
+# ssh -i ~/.ssh/id_cloudlab lbleme@hp109.utah.cloudlab.us
 sudo apt-get update
 sudo apt install build-essential libnuma-dev clang autoconf autotools-dev m4 automake libevent-dev  libpcre++-dev libtool ragel libev-dev moreutils parallel cmake python3 python3-pip libjemalloc-dev libaio-dev libdb5.3++-dev numactl hwloc libmnl-dev libnl-3-dev libnl-route-3-dev uuid-dev libssl-dev libcunit1-dev pkg-config
 sudo apt install make gcc cmake pkg-config libnl-3-dev libnl-route-3-dev libnuma-dev uuid-dev libssl-dev libaio-dev libcunit1-dev libclang-dev libncurses-dev python3-pyelftools
@@ -6,15 +9,10 @@ sudo apt install make gcc cmake pkg-config libnl-3-dev libnl-route-3-dev libnuma
 # install ninja
 sudo apt install ninja-build
 
-git clone https://github.com/andreybleme/caladan.git
-git pull
-git checkout feature/iokernels
-cd caladan
-
 # install python 3.7+
 # Meson works correctly only with python 3.7+. You have python 3.6.9 (default, Mar 10 2023, 16:46:00)
-# TODO: try to install from source code https://www.howtogeek.com/install-latest-python-version-on-ubuntu/
-scp Downloads/Python-3.12.2.tgz lbleme@ms0914.utah.cloudlab.us:/users/lbleme/
+# install from source code https://www.howtogeek.com/install-latest-python-version-on-ubuntu/
+scp Downloads/Python-3.12.2.tgz lbleme@hp074.utah.cloudlab.us:/users/lbleme/
 tar xvf Python-3.12.2.tgz
 cd Python-3.12.2
 ./configure --enable-optimizations
@@ -22,12 +20,11 @@ sudo make install
 # exit and ssh again
 python3 --version
 
-# install meson
+# install meson from source
 # upgrading meson version (0.45 doesn't work to build DPDK)
 mkdir meson
 git clone https://github.com/mesonbuild/meson.git meson
 # USE ABSOLUTE PATH!!
-#sudo mv /usr/bin/meson /usr/bin/meson-0.56.2 (this was the version apt had previously installed for me)
 sudo ln -s /users/lbleme/meson/meson.py /usr/bin/meson
 
 
@@ -38,9 +35,25 @@ sudo ln -s /users/lbleme/meson/meson.py /usr/bin/meson
 sudo apt-get install -y python3-pyelftools python-pyelftools
 pip3 install pyelftools
 
+git clone https://github.com/andreybleme/caladan.git
+cd caladan
+git pull
+git checkout feature/iokernels
+
+# update server.config with IP address $ ip a
+vi server.config
+
+# update client.config
+vi client.config
+
+# update build config to DEBUG and MLX4 driver
 # CONFIG_MLX4=y - build/shared.mk:56: *** mlx4 support is not available currently.  Stop.
 # CONFIG_DEBUG=y
 vi build/config
+
+# update DPDK to use port 1
+# L260 dp.port = 1;
+vi iokernel/dpdk.c
 
 # (OK) build caladan modules
 make submodules
@@ -58,7 +71,7 @@ curl https://sh.rustup.rs -sSf | sh
 export PATH="$HOME/.cargo/bin:$PATH"
 rustup default nightly
 
-# (ok) build syntetic apps (1.79.0-nightly)
+# build syntetic apps (1.79.0-nightly)
 cd apps/synthetic
 cargo clean
 cargo update
@@ -67,17 +80,10 @@ cargo build --release
 # remove line  #![feature(integer_atomics)]
 # vi src/main.rs:1:12 
 
-# (ok) start iokerneld
+# start iokerneld
 sudo ./iokerneld
-sudo ./apps/synthetic/target/release/synthetic 128.110.217.35:5000 --config server.config --mode spawner-server
-# if fail, update server.config with the correct IP from $ ip a
-# vi 
+# run server app
+sudo ./apps/synthetic/target/release/synthetic 128.110.218.148:5000 --config server.config --mode spawner-server
 
-# update client.config
-sudo ./apps/synthetic/target/release/synthetic 128.110.217.35:5000 --config client.config --mode runtime-client
-
-# node 0 128.110.217.35/21
-# node 1 128.110.217.54/21
-
-# currrent: traffic is generated, but not processed by server
-# MLX3 is no longer supported
+# run client app (always use IP from server node)
+sudo ./apps/synthetic/target/release/synthetic 128.110.218.148:5000 --config client.config --mode runtime-client
