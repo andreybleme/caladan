@@ -216,7 +216,7 @@ int dpdk_init(void)
 	argv[argc++] = "./iokerneld";
 	argv[argc++] = "-l";
 	/* use our assigned core */
-	sprintf(buf, "%d", sched_dp_core);
+	sprintf(buf, "%d", sched_dp_core); // maybe should check how many CPUs are used here
 	argv[argc++] = buf;
 	argv[argc++] = "--socket-mem=128";
 	if (nic_pci_addr_str) {
@@ -226,11 +226,14 @@ int dpdk_init(void)
 		argv[argc++] = "--vdev=net_tap0";
 	}
 
+	// argv[argc++] = "--file-prefix multi_iok";
+	argv[argc++] = "--proc-type=auto";
+
 	/* include any user-supplied arguments */
 	for (i = 0; i < dpdk_argc; i++)
 		argv[argc++] = dpdk_argv[i];
 
-	BUG_ON(argc != ARRAY_SIZE(argv));
+	// BUG_ON(argc != ARRAY_SIZE(argv));
 
 	/* initialize the Environment Abstraction Layer (EAL) */
 	int ret = rte_eal_init(argc, argv);
