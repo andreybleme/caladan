@@ -528,7 +528,12 @@ int control_init(void)
 
 	BUILD_ASSERT(strlen(CONTROL_SOCK_PATH) <= sizeof(addr.sun_path) - 1);
 
-	shbuf = mem_map_shm(INGRESS_MBUF_SHM_KEY, NULL, INGRESS_MBUF_SHM_SIZE,
+// 	* @key: the unique key that identifies the shared region (e.g. use ftok())
+//  * @base: the base address to map the shared segment (or automatic if NULL)
+//  * @len: the length of the mapping
+//  * @pgsize: the size of each page
+//  * @exclusive: ensure this call creates the shared segment
+	shbuf = mem_map_shm(0x34B6B9B5, NULL, INGRESS_MBUF_SHM_SIZE,
 			PGSIZE_2MB, true);
 	if (shbuf == MAP_FAILED) {
 		log_err("control: failed to map rx buffer area (%s)", strerror(errno));
@@ -547,9 +552,9 @@ int control_init(void)
 #endif
 
 
-	memset(&addr, 0x0, sizeof(struct sockaddr_un));
+	memset(&addr, 0x0, sizeof(struct sockaddr_un) - 2); // lucas: changed here to use -2
 	addr.sun_family = AF_UNIX;
-	strncpy(addr.sun_path, CONTROL_SOCK_PATH, sizeof(addr.sun_path) - 1);
+	strncpy(addr.sun_path, "\0/control/iokernelb.sock", sizeof(addr.sun_path) - 1); // lucas: changed here to use iokernelb.sock
 
 	sfd = socket(AF_UNIX, SOCK_STREAM, 0);
 	if (sfd == -1) {
@@ -560,13 +565,6 @@ int control_init(void)
 	if (bind(sfd, (struct sockaddr *)&addr,
 		 sizeof(struct sockaddr_un)) == -1) {
 		log_err("control: bind() failed [%s]", strerror(errno));
-		close(sfd);
-		return -errno;
-	}
-
-
-	if (setsockopt(sfd, SOL_SOCKET, SO_REUSEADDR, (struct sockaddr *)&addr, sizeof(struct sockaddr_un)) == -1) {
-		log_err("control: setsockopt() failed [%s]", strerror(errno));
 		close(sfd);
 		return -errno;
 	}
