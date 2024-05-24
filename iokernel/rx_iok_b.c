@@ -220,55 +220,68 @@ static struct rte_mempool *rx_pktmbuf_pool_create_in_shm(const char *name,
 			+ (unsigned) data_room_size;
 	mbp_priv.mbuf_data_room_size = data_room_size;
 	mbp_priv.mbuf_priv_size = priv_size;
+	log_debug("rx: RTE align");
 
 	mp = rte_mempool_create_empty(name, n, elt_size, cache_size,
 			sizeof(struct rte_pktmbuf_pool_private), socket_id, 0);
 	if (mp == NULL)
 		goto fail;
+	log_debug("rx: rte_mempool_create_empty");
+
 
 	ret = rte_mempool_set_ops_byname(mp, RTE_MBUF_DEFAULT_MEMPOOL_OPS, NULL);
 	if (ret != 0) {
 		log_err("rx: error setting mempool handler");
 		goto fail_free_mempool;
 	}
+	log_debug("rx: rte_mempool_set_ops_byname");
 	rte_pktmbuf_pool_init(mp, &mbp_priv);
+	log_debug("rx: rte_pktmbuf_pool_init");
 
 	/* check necessary size and map shared memory */
 	pg_size = PGSIZE_2MB;
 	pg_shift = rte_bsf32(pg_size);
 	len = rte_mempool_ops_calc_mem_size(mp, n, pg_shift, &min_chunk_size, &align) / 2;
+	log_debug("rx: rte_mempool_ops_calc_mem_size");
 	if (len > INGRESS_MBUF_SHM_SIZE_HALF) {
 		log_err("rx: shared memory is too small for number of mbufs");
 		goto fail_free_mempool;
 	}
-    log_debug("rx: len by rte_mempool_ops_calc_mem_size %zu", len);
-
-	shbuf = dp.ingress_mbuf_region.base;
+	log_debug("rx: len by rte_mempool_ops_calc_mem_size %zu", len);
+	shbuf = dp.ingress_mbuf_region.base; // TODO: check size of this base
 
 	/* hack to make sure that this memory area is registered in DPDK */
 	/* use rte_extmem_* and rte_dev_dma_map in the future */
 #pragma GCC diagnostic push
 #pragma GCC diagnostic ignored "-Wdeprecated-declarations"
-	ret = rte_malloc_heap_create("rx_buf_heap");
+	ret = rte_malloc_heap_create("rx_buf_heap_b");
 	if (ret < 0)
 		goto fail_unmap_memory;
-    log_debug("rx: rte_malloc_heap_create");
+	log_debug("rx: rte_malloc_heap_create");
 
-	ret = rte_malloc_heap_memory_add("rx_buf_heap", shbuf, INGRESS_MBUF_SHM_SIZE_HALF, NULL, 0, PGSIZE_2MB);
+	/*
+	  * heap_name	Name of the heap to add memory chunk to
+	  * va_addr	Start of virtual area to add to the heap. Must be aligned by page_sz.
+	  * len	Length of virtual area to add to the heap. Must be aligned by page_sz.
+      * iova_addrs	Array of page IOVA addresses corresponding to each page in this memory area. Can be NULL, in which case page IOVA addresses will be set to RTE_BAD_IOVA.
+	  * n_pages	Number of elements in the iova_addrs array. Ignored if iova_addrs is NULL.
+	  * page_sz	Page size of the underlying memory
+	*/
+	ret = rte_malloc_heap_memory_add("rx_buf_heap_b", shbuf, INGRESS_MBUF_SHM_SIZE_HALF, NULL, 0, PGSIZE_2MB);
 	if (ret < 0)
 		goto fail_unmap_memory;
-    log_debug("rx: rte_malloc_heap_memory_add");
+	log_debug("rx: rte_malloc_heap_memory_add");
 
-	heap_id = rte_malloc_heap_get_socket("rx_buf_heap");
+	heap_id = rte_malloc_heap_get_socket("rx_buf_heap_b");
 	if (heap_id < 0)
 		goto fail_unmap_memory;
-    log_debug("rx: rte_malloc_heap_get_socket");
+	log_debug("rx: rte_malloc_heap_get_socket");
 #pragma GCC diagnostic pop
 
 	heap_area = rte_malloc_socket(NULL, len, PGSIZE_2MB, heap_id);
 	if (!heap_area)
 		goto fail_unmap_memory;
-    log_debug("rx: rte_malloc_socket");
+	log_debug("rx: rte_malloc_socket");
 
 	/* populate mempool using shared memory */
 	ret = rte_mempool_populate_virt(mp, heap_area, len, pg_size,
@@ -277,9 +290,10 @@ static struct rte_mempool *rx_pktmbuf_pool_create_in_shm(const char *name,
 		log_err("rx: error populating mempool %d", ret);
 		goto fail_unmap_memory;
 	}
-    log_debug("rx: rte_mempool_populate_virt");
+	log_debug("rx: rte_mempool_populate_virt");
 
 	rte_mempool_obj_iter(mp, rte_pktmbuf_init, NULL);
+	log_debug("rx: rte_mempool_obj_iter");
 
 	return mp;
 
@@ -298,8 +312,8 @@ fail:
 int rx_init()
 {
 	/* create a mempool in shared memory to hold the rx mbufs */
-	dp.rx_mbuf_pool = rx_pktmbuf_pool_create_in_shm("RX_MBUF_POOL",
-			IOKERNEL_NUM_MBUFS, MBUF_CACHE_SIZE, 0, RTE_MBUF_DEFAULT_BUF_SIZE,
+	dp.rx_mbuf_pool = rx_pktmbuf_pool_create_in_shm("RX_MBUF_POOL_B",
+			(4096 * 16), MBUF_CACHE_SIZE, 0, RTE_MBUF_DEFAULT_BUF_SIZE,
 			rte_socket_id());
 
 	if (dp.rx_mbuf_pool == NULL) {
