@@ -6,6 +6,18 @@ sudo apt-get update
 sudo apt install -y build-essential libnuma-dev clang autoconf autotools-dev m4 automake libevent-dev  libpcre++-dev libtool ragel libev-dev moreutils parallel cmake python3 python3-pip libjemalloc-dev libaio-dev libdb5.3++-dev numactl hwloc libmnl-dev libnl-3-dev libnl-route-3-dev uuid-dev libssl-dev libcunit1-dev pkg-config
 sudo apt install -y make gcc cmake pkg-config libnl-3-dev libnl-route-3-dev libnuma-dev uuid-dev libssl-dev libaio-dev libcunit1-dev libclang-dev libncurses-dev python3-pyelftools
 
+# Install MLNX OFED driver (https://network.nvidia.com/products/infiniband-drivers/linux/mlnx_ofed/)
+scp Downloads/MLNX_OFED_LINUX-5.8-5.1.1.2-ubuntu22.04-x86_64.tgz lbleme@hp092.utah.cloudlab.us:/users/lbleme/
+tar -xvzf MLNX_OFED_LINUX-5.8-5.1.1.2-ubuntu22.04-x86_64.tgz
+sudo ./mlnxofedinstall --upstream-libs --dpdk
+
+# Update RSS config for MLX4 (https://docs.nvidia.com/networking/display/mlnxofedv461000/rss+support)
+sudo ethtool -X eno49np0 hfunc xor
+sudo ethtool --show-rxfh eno49np0
+# ethtool commands (https://docs.nvidia.com/networking/display/mlnxofedv461000/ethtool#src-12013419_Ethtool-EthtoolSupportedOptionsTable)
+sudo ethtool -i eno49np0
+
+
 # install ninja
 sudo apt install -y ninja-build
 
@@ -60,7 +72,7 @@ vi iokernel/dpdk.c
 make submodules
 
 # (OK) build IOKernel
-make clean && make
+make clean && make # gcc -T ./base/base.ld -rdynamic -o tests/test_runtime_timer tests/test_runtime_timer.o ./libruntime.a ./libnet.a ./libbase.a -lpthrea
 pushd ksched
 make clean && make
 popd
@@ -78,12 +90,19 @@ git clone https://github.com/andreybleme/caladan.git
 cd caladan
 git pull
 git checkout feature/iokernels
-# paste sched_iok_b.c
-rm iokernel/sched.c
-vi vi iokernel/sched.c
-# paste control_iok_b.c
+# use iok_b.c files
+rm iokernel/control_iok_b.c
+rm iokernel/sched_iok_b.c
+rm iokernel/rx_iok_b.c
+rm iokernel/tx_iok_b.c
+rm iokernel/dp_clients_iok_b.c
+
 rm iokernel/control.c
-vi vi iokernel/control.c
+rm iokernel/sched.c
+rm iokernel/rx.c
+rm iokernel/tx.c
+rm iokernel/dp_clients.c
+
 
 # build syntetic apps (1.79.0-nightly)
 cd apps/synthetic
