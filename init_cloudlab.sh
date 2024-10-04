@@ -96,6 +96,7 @@ rm iokernel/sched_iok_b.c
 rm iokernel/rx_iok_b.c
 rm iokernel/tx_iok_b.c
 rm iokernel/dp_clients_iok_b.c
+rm iokernel/dpdk_iok_b.c
 
 rm iokernel/control.c
 rm iokernel/sched.c
