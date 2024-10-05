@@ -3,6 +3,7 @@ include $(ROOT_PATH)/build/shared.mk
 
 DPDK_PATH = dpdk
 CHECKFLAGS = -D__CHECKER__ -Waddress-space
+CFLAGS += -MMD
 
 ifneq ($(TCP_RX_STATS),)
 CFLAGS += -DTCP_RX_STATS
@@ -17,9 +18,8 @@ net_src = $(wildcard net/*.c)
 net_obj = $(net_src:.c=.o)
 
 # iokernel - a soft-NIC service
-iokernel_src = $(wildcard iokernel/*.c)
+iokernel_src = $(wildcard iokernel/*.c) $(wildcard iokernel/directpath/*.c)
 iokernel_obj = $(iokernel_src:.c=.o)
-$(iokernel_obj): INC += -I$(DPDK_PATH)/build/include
 
 # runtime - a user-level threading and networking library
 runtime_src = $(wildcard runtime/*.c) $(wildcard runtime/net/*.c)
@@ -41,13 +41,16 @@ PCM_LIBS = -lm -lstdc++
 # dpdk libs
 DPDK_LIBS=$(shell PKG_CONFIG_PATH=$(PKG_CONFIG_PATH) pkg-config --libs --static libdpdk)
 
+
+# must be first
+all: libbase.a libnet.a libruntime.a iokerneld $(test_targets) shim
+
+$(iokernel_obj): INC += -I$(DPDK_PATH)/build/include
+
 # additional libs for running with Mellanox NICs
 ifeq ($(CONFIG_MLX5),y)
 $(iokernel_obj): INC += $(MLX5_INC)
 endif
-
-# must be first
-all: libbase.a libnet.a libruntime.a iokerneld $(test_targets)
 
 libbase.a: $(base_obj)
 	$(AR) rcs $@ $^
@@ -63,7 +66,12 @@ iokerneld: $(iokernel_obj) libbase.a libnet.a base/base.ld $(PCM_DEPS)
 	$(PCM_DEPS) $(PCM_LIBS) -lpthread -lnuma -ldl
 
 $(test_targets): $(test_obj) libbase.a libruntime.a libnet.a base/base.ld
-	$(LD) $(LDFLAGS) -o $@ $@.o $(RUNTIME_LIBS)
+	$(LD) $(FLAGS) $(LDFLAGS) -o $@ $@.o $(RUNTIME_LIBS)
+
+shim:
+	$(MAKE) -C shim/
+
+.PHONY: shim
 
 # general build rules for all targets
 src = $(base_src) $(net_src) $(runtime_src) $(iokernel_src) $(test_src)
@@ -75,14 +83,8 @@ ifneq ($(MAKECMDGOALS),clean)
 -include $(dep)   # include all dep files in the makefile
 endif
 
-# rule to generate a dep file by using the C preprocessor
-# (see man cpp for details on the -MM and -MT options)
-%.d: %.c
-	@$(CC) $(CFLAGS) $< -MM -MT $(@:.d=.o) >$@
 %.o: %.c
 	$(CC) $(CFLAGS) -c $< -o $@
-%.d: %.S
-	@$(CC) $(CFLAGS) $< -MM -MT $(@:.d=.o) >$@
 %.o: %.S
 	$(CC) $(CFLAGS) -c $< -o $@
 
@@ -102,3 +104,4 @@ submodules-clean:
 clean:
 	rm -f $(obj) $(dep) libbase.a libnet.a libruntime.a \
 	iokerneld $(test_targets)
+	$(MAKE) -C shim/ clean

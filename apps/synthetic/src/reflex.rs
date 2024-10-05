@@ -1,18 +1,21 @@
+use crate::Buffer;
+use crate::Connection;
+use crate::Distribution;
+use crate::LoadgenProtocol;
+use crate::Packet;
+use crate::Transport;
+
 use byteorder::{LittleEndian, ReadBytesExt, WriteBytesExt};
 use clap::Arg;
 use std::io;
 use std::io::{Error, ErrorKind, Read};
 
-use mersenne_twister::MersenneTwister;
-use rand::distributions::{IndependentSample, Range};
-use rand::{Rng, SeedableRng};
-use std::cmp::min;
+use rand::distributions::Uniform;
+use rand::Rng;
+use rand_distr::Distribution as DistR;
+use rand_mt::Mt64;
 
-use Connection;
-use Distribution;
-use LoadgenProtocol;
-use Packet;
-use Transport;
+use std::cmp::min;
 
 const REFLEX_HDR_SZ: usize = 32;
 const REFLEX_MAGIC: u16 = REFLEX_HDR_SZ as u16;
@@ -83,23 +86,12 @@ pub struct ReflexProtocol {
 static PAGE_DATA: &'static [u8] = &[0xab; 8 * SECTOR_SIZE];
 
 impl ReflexProtocol {
-    pub fn with_args(matches: &clap::ArgMatches, tport: Transport) -> Self {
+    pub fn with_args(matches: &clap::ArgMatches, tport: Transport, dist: Distribution) -> Self {
         if let Transport::Udp = tport {
             panic!("udp is unsupported by the reflex protocol");
         }
-        let sr = value_t!(matches, "mean", f64).unwrap();
-        let distribution = match matches.value_of("distribution").unwrap() {
-            "zero" => Distribution::Zero,
-            "constant" => Distribution::Constant(sr as u64),
-            "exponential" => Distribution::Exponential(sr),
-            "bimodal1" => Distribution::Bimodal1(sr),
-            "bimodal2" => Distribution::Bimodal2(sr),
-            "bimodal3" => Distribution::Bimodal3(sr),
-            _ => unreachable!(),
-        };
-
         ReflexProtocol {
-            sectors_per_rq: distribution,
+            sectors_per_rq: dist,
             pct_set: value_t!(matches, "reflex_set_rate", u64).unwrap(),
         }
     }
@@ -140,8 +132,12 @@ impl ReflexProtocol {
 }
 
 impl LoadgenProtocol for ReflexProtocol {
+    fn uses_ordered_requests(&self) -> bool {
+        false
+    }
+
     fn gen_req(&self, i: usize, p: &Packet, buf: &mut Vec<u8>) {
-        let mut rng: MersenneTwister = SeedableRng::from_seed(p.randomness);
+        let mut rng: Mt64 = Mt64::new(p.randomness);
         let lba = (rng.gen::<u64>() % NUM_SECTORS) & LBA_ALIGNMENT;
         let mut lbacount = self.sectors_per_rq.sample(&mut rng);
 
@@ -149,7 +145,7 @@ impl LoadgenProtocol for ReflexProtocol {
             lbacount = NUM_SECTORS - lba;
         }
 
-        if Range::new(0, 1000).ind_sample(&mut rng) < self.pct_set {
+        if Uniform::new(0, 1000).sample(&mut rng) < self.pct_set {
             self.set_request(lba, lbacount as usize, i, buf);
             return;
         }
@@ -165,7 +161,8 @@ impl LoadgenProtocol for ReflexProtocol {
         .unwrap();
     }
 
-    fn read_response(&self, mut sock: &Connection, scratch: &mut [u8]) -> io::Result<(usize, u64)> {
+    fn read_response(&self, mut sock: &Connection, buf: &mut Buffer) -> io::Result<(usize, u64)> {
+        let scratch = buf.get_empty_buf();
         sock.read_exact(&mut scratch[..REFLEX_HDR_SZ])?;
         let hdr = PacketHeader::read(&mut &scratch[..])?;
         if hdr.opcode == Opcode::Get as u16 {

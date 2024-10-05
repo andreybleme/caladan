@@ -6,11 +6,11 @@ use byteorder::{ByteOrder, NetworkEndian};
 
 use super::*;
 
-fn isize_to_result(i: i64) -> io::Result<usize> {
+fn isize_to_result(i: isize) -> io::Result<usize> {
     if i >= 0 {
         Ok(i as usize)
     } else {
-        Err(io::Error::from_raw_os_error(i as i32))
+        Err(io::Error::from_raw_os_error(-i as i32))
     }
 }
 
@@ -24,7 +24,7 @@ impl TcpQueue {
         let mut queue = ptr::null_mut();
         let ret = unsafe { ffi::tcp_listen(laddr, backlog, &mut queue as *mut _) };
         if ret < 0 {
-            Err(io::Error::from_raw_os_error(ret as i32))
+            Err(io::Error::from_raw_os_error(-ret as i32))
         } else {
             Ok(TcpQueue(queue))
         }
@@ -33,7 +33,7 @@ impl TcpQueue {
         let mut conn = ptr::null_mut();
         let ret = unsafe { ffi::tcp_accept(self.0, &mut conn as *mut _) };
         if ret < 0 {
-            Err(io::Error::from_raw_os_error(ret as i32))
+            Err(io::Error::from_raw_os_error(-ret as i32))
         } else {
             Ok(TcpConnection(conn))
         }
@@ -65,7 +65,7 @@ impl TcpConnection {
         let mut conn = ptr::null_mut();
         let ret = unsafe { ffi::tcp_dial(laddr, raddr, &mut conn as *mut _) };
         if ret < 0 {
-            Err(io::Error::from_raw_os_error(ret as i32))
+            Err(io::Error::from_raw_os_error(-ret as i32))
         } else {
             Ok(TcpConnection(conn))
         }
@@ -86,7 +86,7 @@ impl TcpConnection {
         if res == 0 {
             Ok(())
         } else {
-            Err(io::Error::from_raw_os_error(res as i32))
+            Err(io::Error::from_raw_os_error(-res as i32))
         }
     }
 
@@ -98,21 +98,21 @@ impl TcpConnection {
 impl<'a> Read for &'a TcpConnection {
     fn read(&mut self, buf: &mut [u8]) -> io::Result<usize> {
         isize_to_result(unsafe {
-            ffi::tcp_read(self.0, buf.as_mut_ptr() as *mut c_void, buf.len() as _)
+            ffi::tcp_read(self.0, buf.as_mut_ptr() as *mut c_void, buf.len() as _) as _
         })
     }
 }
 impl Read for TcpConnection {
     fn read(&mut self, buf: &mut [u8]) -> io::Result<usize> {
         isize_to_result(unsafe {
-            ffi::tcp_read(self.0, buf.as_mut_ptr() as *mut c_void, buf.len() as _)
+            ffi::tcp_read(self.0, buf.as_mut_ptr() as *mut c_void, buf.len() as _) as _
         })
     }
 }
 impl<'a> Write for &'a TcpConnection {
     fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
         isize_to_result(unsafe {
-            ffi::tcp_write(self.0, buf.as_ptr() as *const c_void, buf.len() as _)
+            ffi::tcp_write(self.0, buf.as_ptr() as *const c_void, buf.len() as _) as _
         })
     }
     fn flush(&mut self) -> io::Result<()> {

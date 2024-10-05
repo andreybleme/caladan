@@ -9,7 +9,7 @@ include $(ROOT_PATH)/build/config
 
 # shared toolchain definitions
 INC = -I$(ROOT_PATH)/inc
-FLAGS  = -g -Wall -D_GNU_SOURCE $(INC)
+FLAGS  = -g -Wall -D_GNU_SOURCE $(INC) -m64 -mxsavec -m64 -mxsave -m64 -muintr
 LDFLAGS = -T $(ROOT_PATH)/base/base.ld
 LD      = gcc
 CC      = gcc
@@ -17,6 +17,14 @@ LDXX	= g++
 CXX	= g++
 AR      = ar
 SPARSE  = sparse
+
+ifeq ($(CONFIG_CLANG),y)
+LD	= clang
+CC	= clang
+LDXX	= clang++
+CXX	= clang++
+FLAGS += -Wno-sync-fetch-and-nand-semantics-changed
+endif
 
 # libraries to include
 RUNTIME_DEPS = $(ROOT_PATH)/libruntime.a $(ROOT_PATH)/libnet.a \
@@ -44,7 +52,10 @@ LDFLAGS += -rdynamic
 else
 FLAGS += -DNDEBUG -O3
 ifeq ($(CONFIG_OPTIMIZE),y)
-FLAGS += -march=native -flto -ffast-math
+FLAGS += -march=native -flto=auto -ffast-math
+ifeq ($(CONFIG_CLANG),y)
+LDFLAGS += -flto
+endif
 else
 FLAGS += -mssse3
 endif

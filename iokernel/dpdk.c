@@ -36,6 +36,7 @@
  */
 
 #include <inttypes.h>
+#include <rte_bus_pci.h>
 #include <rte_eal.h>
 #include <rte_ethdev.h>
 #include <rte_ether.h>
@@ -113,6 +114,7 @@ static inline int dpdk_port_init(uint8_t port, struct rte_mempool *mbuf_pool)
 	if (is_mlx5) {
 		nb_rxd = MLX5_RX_RING_SIZE;
 		nb_txd = MLX5_TX_RING_SIZE;
+		port_conf.lpbk_mode = 1;
 	}
 
 	/* Configure the Ethernet device. */
@@ -153,12 +155,25 @@ static inline int dpdk_port_init(uint8_t port, struct rte_mempool *mbuf_pool)
 	/* Display the port MAC address. */
 	struct rte_ether_addr addr;
 	rte_eth_macaddr_get(port, &addr);
+	memcpy(&iok_info->host_mac, &addr, sizeof(iok_info->host_mac));
 	log_info("dpdk: driver: %s port %u MAC: %02" PRIx8 " %02" PRIx8 " %02" PRIx8
 			" %02" PRIx8 " %02" PRIx8 " %02" PRIx8 "",
 			dev_info.driver_name, (unsigned)port,
 			addr.addr_bytes[0], addr.addr_bytes[1],
 			addr.addr_bytes[2], addr.addr_bytes[3],
 			addr.addr_bytes[4], addr.addr_bytes[5]);
+
+	/* record the PCI address */
+	if (!nic_pci_addr_str && dev_info.device &&
+	    rte_bus_find_by_device(dev_info.device)) {
+		struct rte_pci_device *pci_dev = RTE_DEV_TO_PCI(dev_info.device);
+		nic_pci_addr.domain = pci_dev->addr.domain;
+		nic_pci_addr.bus = pci_dev->addr.bus;
+		nic_pci_addr.slot = pci_dev->addr.devid;
+		nic_pci_addr.func = pci_dev->addr.function;
+		nic_pci_addr_str = "";
+		memcpy(&iok_info->directpath_pci, &nic_pci_addr, sizeof(nic_pci_addr));
+	}
 
 	/* Enable RX in promiscuous mode for the Ethernet device. */
 	rte_eth_promiscuous_enable(port);
@@ -207,40 +222,63 @@ void dpdk_print_eth_stats(void)
  */
 int dpdk_init(void)
 {
-	char *argv[4 + (nic_pci_addr_str ? 2 : 1) + dpdk_argc];
-	char buf[10];
+	unsigned int max_args;
+	char buf[10], **argv;
+	int i, ret, argc = 0;
 
-	int i, argc = 0;
+	max_args = 7 + dpdk_argc;
+	argv = malloc(max_args * sizeof(char *));
+	if (!argv)
+		return -ENOMEM;
+
+#define ARGV(strval)               \
+	({                          \
+		BUG_ON(argc == max_args); \
+		argv[argc++] = (strval);  \
+	})
 
 	/* init args */
-	argv[argc++] = "./iokerneld";
-	argv[argc++] = "-l";
+	ARGV("./iokerneld");
+	ARGV("-l");
 	/* use our assigned core */
 	sprintf(buf, "%d", sched_dp_core);
-	argv[argc++] = buf;
-	argv[argc++] = "--socket-mem=128";
-	if (nic_pci_addr_str) {
-		argv[argc++] = "--allow";
-		argv[argc++] = nic_pci_addr_str;
+	ARGV(buf);
+
+	if (cfg.no_hugepages)
+		ARGV("--no-huge");
+	else
+		ARGV("--socket-mem=128");
+
+	if (cfg.vfio_directpath) {
+		ARGV("--vdev=net_tap0");
+		ARGV("--allow");
+		ARGV("0000:00:00.0");
+	} else if (cfg.azure_arp_mode) {
+		ARGV("--allow");
+		ARGV("0000:00:00.0");
+	} else if (nic_pci_addr_str) {
+		ARGV("--allow");
+		ARGV(nic_pci_addr_str);
 	} else {
-		argv[argc++] = "--vdev=net_tap0";
+		ARGV("--vdev=net_tap0");
 	}
 
 	/* include any user-supplied arguments */
 	for (i = 0; i < dpdk_argc; i++)
-		argv[argc++] = dpdk_argv[i];
+		ARGV(dpdk_argv[i]);
 
-	BUG_ON(argc != ARRAY_SIZE(argv));
+#undef ARGV
 
 	/* initialize the Environment Abstraction Layer (EAL) */
-	int ret = rte_eal_init(argc, argv);
+	ret = rte_eal_init(argc, argv);
+	free(argv);
 	if (ret < 0) {
 		log_err("dpdk: error with EAL initialization");
 		return -1;
 	}
 
 	/* check that there is a port to send/receive on */
-	if (!rte_eth_dev_is_valid_port(0)) {
+	if (!cfg.vfio_directpath && !rte_eth_dev_is_valid_port(0)) {
 		log_err("dpdk: no available ports");
 		return -1;
 	}
@@ -256,6 +294,10 @@ int dpdk_init(void)
  */
 int dpdk_late_init(void)
 {
+
+	if (cfg.vfio_directpath)
+		return 0;
+
 	/* initialize port */
 	dp.port = 0;
 	if (dpdk_port_init(dp.port, dp.rx_mbuf_pool) != 0) {

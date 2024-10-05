@@ -118,7 +118,7 @@ static void tcp_handle_timeouts(tcpconn_t *c, uint64_t now)
 /* a periodic background thread that handles timeout events */
 static void tcp_worker(void *arg)
 {
-	tcpconn_t *c;
+	tcpconn_t *c, *c_next;
 	uint64_t now;
 
 	while (true) {
@@ -134,7 +134,8 @@ static void tcp_worker(void *arg)
 		}
 
 
-		list_for_each(&tcp_conns, c, global_link) {
+		list_for_each_safe(&tcp_conns, c, c_next, global_link) {
+			prefetch(c_next);
 			if (preempt_needed()) {
 				again = true;
 				break;
@@ -148,6 +149,39 @@ static void tcp_worker(void *arg)
 			timer_sleep(10 * ONE_MS);
 	}
 }
+
+/**
+ * tcp_free_rx_bufs - try to free some buffers when we are running low
+ *
+ * This function scans all active TCP connections, dropping packets in the
+ * out-of-order queue and waking any waiters to handle in-order packets
+ */
+void tcp_free_rx_bufs(void)
+{
+	tcpconn_t *c;
+
+	LIST_HEAD(mbufs);
+	LIST_HEAD(waiters);
+
+	spin_lock_np(&tcp_lock);
+
+	list_for_each(&tcp_conns, c, global_link) {
+		if (list_empty_volatile(&c->rxq_ooo) && list_empty_volatile(&c->rxq))
+			continue;
+
+		spin_lock_np(&c->lock);
+		waitq_release_start(&c->rx_wq, &waiters);
+		list_append_list(&mbufs, &c->rxq_ooo);
+		c->rxq_ooo_len = 0;
+		spin_unlock_np(&c->lock);
+	}
+
+	spin_unlock_np(&tcp_lock);
+
+	mbuf_list_free(&mbufs);
+	waitq_release_finish(&waiters);
+}
+
 
 /**
  * tcp_conn_ack - removes acknowledged packets from TX queue
@@ -237,6 +271,17 @@ static uint32_t tcp_scale_window(uint32_t maxwin)
 	return wscale;
 }
 
+int tcp_get_status(tcpconn_t *c) {
+
+	if (load_acquire(&c->pcb.state) < TCP_STATE_ESTABLISHED)
+		return -EINPROGRESS;
+
+	if (load_acquire(&c->tx_closed))
+		return c->err ? -c->err : -EPIPE;
+
+	return 0;
+}
+
 /**
  * tcp_conn_alloc - allocates a TCP connection struct
  *
@@ -253,6 +298,7 @@ tcpconn_t *tcp_conn_alloc(void)
 	/* general fields */
 	memset(&c->pcb, 0, sizeof(c->pcb));
 	spin_lock_init(&c->lock);
+	c->nonblocking = false;
 	kref_init(&c->ref);
 	c->err = 0;
 
@@ -387,10 +433,21 @@ struct tcpqueue {
 	struct list_head	conns;
 	int			backlog;
 	bool			shutdown;
+	bool			nonblocking;
 
 	struct kref ref;
 	struct flow_registration flow;
 };
+
+struct netaddr tcpq_local_addr(tcpqueue_t *q)
+{
+	return q->e.laddr;
+}
+
+int tcpq_backlog(tcpqueue_t *q)
+{
+	return q->backlog;
+}
 
 static void tcp_queue_recv(struct trans_entry *e, struct mbuf *m)
 {
@@ -461,7 +518,7 @@ int tcp_listen(struct netaddr laddr, int backlog, tcpqueue_t **q_out)
 		return -EINVAL;
 
 	/* only can support one local IP so far */
-	if (laddr.ip == 0)
+	if (laddr.ip == 0 || laddr.ip == MAKE_IP_ADDR(127, 0, 0, 1))
 		laddr.ip = netcfg.addr;
 	else if (laddr.ip != netcfg.addr)
 		return -EINVAL;
@@ -476,9 +533,14 @@ int tcp_listen(struct netaddr laddr, int backlog, tcpqueue_t **q_out)
 	list_head_init(&q->conns);
 	q->backlog = backlog;
 	q->shutdown = false;
+	q->nonblocking = false;
 	kref_init(&q->ref);
 
-	ret = trans_table_add(&q->e);
+
+	if (laddr.port == 0)
+		ret = trans_table_add_with_ephemeral_port(&q->e);
+	else
+		ret = trans_table_add(&q->e);
 	if (ret) {
 		sfree(q);
 		return ret;
@@ -507,8 +569,14 @@ int tcp_accept(tcpqueue_t *q, tcpconn_t **c_out)
 	tcpconn_t *c;
 
 	spin_lock_np(&q->l);
-	while (list_empty(&q->conns) && !q->shutdown)
+
+	while (list_empty(&q->conns) && !q->shutdown) {
+		if (q->nonblocking) {
+			spin_unlock_np(&q->l);
+			return -EAGAIN;
+		}
 		waitq_wait(&q->wq, &q->l);
+	}
 
 	/* was the queue drained and shutdown? */
 	if (list_empty(&q->conns) && q->shutdown) {
@@ -585,15 +653,8 @@ void tcp_qclose(tcpqueue_t *q)
  * Support for the TCP socket API
  */
 
-/**
- * tcp_dial - opens a TCP connection, creating a new socket
- * @laddr: the local address
- * @raddr: the remote address
- * @c_out: a pointer to store the new connection
- *
- * Returns 0 if successful, otherwise fail.
- */
-int tcp_dial(struct netaddr laddr, struct netaddr raddr, tcpconn_t **c_out)
+static int __tcp_dial(struct netaddr laddr, struct netaddr raddr,
+	                  tcpconn_t **c_out, bool nonblocking)
 {
 	struct tcp_options opts;
 	tcpconn_t *c;
@@ -603,6 +664,8 @@ int tcp_dial(struct netaddr laddr, struct netaddr raddr, tcpconn_t **c_out)
 	c = tcp_conn_alloc();
 	if (unlikely(!c))
 		return -ENOMEM;
+
+	c->nonblocking = nonblocking;
 
 	/* rewrite loopback address */
 	if (raddr.ip == MAKE_IP_ADDR(127, 0, 0, 1))
@@ -633,6 +696,12 @@ int tcp_dial(struct netaddr laddr, struct netaddr raddr, tcpconn_t **c_out)
 	tcp_conn_get(c); /* take a ref for the state machine */
 	tcp_conn_set_state(c, TCP_STATE_SYN_SENT);
 
+	if (c->nonblocking) {
+		spin_unlock_np(&c->lock);
+		*c_out = c;
+		return -EINPROGRESS;
+	}
+
 	/* wait until the connection is established or there is a failure */
 	while (!c->tx_closed && c->pcb.state < TCP_STATE_ESTABLISHED)
 		waitq_wait(&c->tx_wq, &c->lock);
@@ -648,6 +717,34 @@ int tcp_dial(struct netaddr laddr, struct netaddr raddr, tcpconn_t **c_out)
 
 	*c_out = c;
 	return 0;
+}
+
+/**
+ * tcp_dial - opens a TCP connection, creating a new socket
+ * @laddr: the local address
+ * @raddr: the remote address
+ * @c_out: a pointer to store the new connection
+ *
+ * Returns 0 if successful, otherwise fail.
+ */
+int tcp_dial(struct netaddr laddr, struct netaddr raddr, tcpconn_t **c_out)
+{
+	return __tcp_dial(laddr, raddr, c_out, false);
+}
+
+/**
+ * tcp_dial_nonblocking - opens a nonblocking TCP connection, creating a new
+ * socket
+ * @laddr: the local address
+ * @raddr: the remote address
+ * @c_out: a pointer to store the new connection
+ *
+ * Returns 0 if successful, otherwise fail.
+ */
+int tcp_dial_nonblocking(struct netaddr laddr, struct netaddr raddr,
+	                     tcpconn_t **c_out)
+{
+	return __tcp_dial(laddr, raddr, c_out, true);
 }
 
 /**
@@ -746,8 +843,13 @@ static ssize_t tcp_read_wait(tcpconn_t *c, size_t len,
 	spin_lock_np(&c->lock);
 
 	/* block until there is an actionable event */
-	while (!c->rx_closed && (c->rx_exclusive || list_empty(&c->rxq)))
+	while (!c->rx_closed && (c->rx_exclusive || list_empty(&c->rxq))) {
+		if (c->nonblocking) {
+			spin_unlock_np(&c->lock);
+			return -EAGAIN;
+		}
 		waitq_wait(&c->rx_wq, &c->lock);
+	}
 
 	/* is the socket closed? */
 	if (c->rx_closed) {
@@ -957,6 +1059,10 @@ static int tcp_write_wait(tcpconn_t *c, size_t *winlen)
 			c->zero_wnd_ts = microtime();
 			tcp_timer_update(c);
 		}
+		if (c->nonblocking) {
+			spin_unlock_np(&c->lock);
+			return -EAGAIN;
+		}
 		waitq_wait(&c->tx_wq, &c->lock);
 	}
 	c->zero_wnd = false;
@@ -1121,7 +1227,7 @@ void tcp_conn_fail(tcpconn_t *c, int err)
 	tcp_conn_shutdown_rx(c);
 
 	if (!c->tx_closed) {
-		c->tx_closed = true;
+		store_release(&c->tx_closed, true);
 		waitq_release(&c->tx_wq);
 	}
 
@@ -1167,7 +1273,12 @@ static int tcp_conn_shutdown_tx(tcpconn_t *c)
 	if (c->tx_closed)
 		return 0;
 
-	assert(c->pcb.state >= TCP_STATE_ESTABLISHED);
+	if (unlikely(c->pcb.state < TCP_STATE_ESTABLISHED)) {
+		tcp_conn_fail(c, ECONNABORTED);
+		tcp_tx_raw_rst(c->e.laddr, c->e.raddr, c->pcb.snd_nxt);
+		return 0;
+	}
+
 	while (c->tx_exclusive)
 		waitq_wait(&c->tx_wq, &c->lock);
 	ret = tcp_tx_ctl(c, TCP_FIN | TCP_ACK, NULL);
@@ -1267,6 +1378,26 @@ void tcp_close(tcpconn_t *c)
 	spin_unlock_np(&c->lock);
 
 	tcp_conn_put(c);
+}
+
+void tcp_set_nonblocking(tcpconn_t *c, bool nonblocking)
+{
+	spin_lock_np(&c->lock);
+	c->nonblocking = nonblocking;
+	if (nonblocking) {
+		waitq_release(&c->tx_wq);
+		waitq_release(&c->rx_wq);
+	}
+	spin_unlock_np(&c->lock);
+}
+
+void tcpq_set_nonblocking(tcpqueue_t *q, bool nonblocking)
+{
+	spin_lock_np(&q->l);
+	q->nonblocking = nonblocking;
+	if (nonblocking)
+		waitq_release(&q->wq);
+	spin_unlock_np(&q->l);
 }
 
 /**

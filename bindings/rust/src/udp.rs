@@ -6,11 +6,11 @@ use byteorder::{ByteOrder, NetworkEndian};
 
 use super::*;
 
-fn isize_to_result(i: i64) -> io::Result<usize> {
+fn isize_to_result(i: isize) -> io::Result<usize> {
     if i >= 0 {
         Ok(i as usize)
     } else {
-        Err(io::Error::from_raw_os_error(i as i32))
+        Err(io::Error::from_raw_os_error(-i as i32))
     }
 }
 
@@ -29,7 +29,7 @@ impl UdpConnection {
         let mut conn = ptr::null_mut();
         let ret = unsafe { ffi::udp_dial(laddr, raddr, &mut conn as *mut _) };
         if ret < 0 {
-            Err(io::Error::from_raw_os_error(ret as i32))
+            Err(io::Error::from_raw_os_error(-ret as i32))
         } else {
             Ok(UdpConnection(conn))
         }
@@ -43,7 +43,7 @@ impl UdpConnection {
         let mut conn = ptr::null_mut();
         let ret = unsafe { ffi::udp_listen(laddr, &mut conn as *mut _) };
         if ret < 0 {
-            Err(io::Error::from_raw_os_error(ret as i32))
+            Err(io::Error::from_raw_os_error(-ret as i32))
         } else {
             Ok(UdpConnection(conn))
         }
@@ -176,7 +176,7 @@ impl UdpSpawner {
         let ret = ffi::udp_create_spawner(laddr, Some(f), &mut spawner as *mut *mut _);
 
         if ret < 0 {
-            Err(io::Error::from_raw_os_error(ret as i32))
+            Err(io::Error::from_raw_os_error(-ret as i32))
         } else {
             Ok(UdpSpawner(spawner))
         }

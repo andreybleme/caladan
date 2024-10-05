@@ -11,11 +11,13 @@
 #include <base/bitmap.h>
 #include <base/log.h>
 #include <base/cpu.h>
+#include <base/mem.h>
 
 #include "defs.h"
 
-int arp_static_count = 0;
-struct cfg_arp_static_entry static_entries[MAX_ARP_STATIC_ENTRIES];
+static size_t arp_static_sz;
+size_t arp_static_count;
+struct cfg_arp_static_entry *static_entries;
 int preferred_socket = 0;
 
 /*
@@ -225,10 +227,8 @@ static int parse_runtime_quantum_us(const char *name, const char *val)
 
 static int parse_mac_address(const char *name, const char *val)
 {
-	int ret = str_to_mac(val, &netcfg.mac);
-	if (ret)
-		log_err("Could not parse mac address: %s", val);
-	return ret;
+	log_warn("specifying mac address is deprecated.");
+	return 0;
 }
 
 static int parse_mtu(const char *num, const char *val)
@@ -259,6 +259,13 @@ static int parse_watchdog_flag(const char *name, const char *val)
 static int parse_static_arp_entry(const char *name, const char *val)
 {
 	int ret;
+
+	if (arp_static_sz == arp_static_count) {
+		arp_static_sz = MAX(32, (arp_static_count + 1) * 2);
+		static_entries = reallocarray(static_entries, arp_static_sz, sizeof(*static_entries));
+		if (!static_entries)
+			return -ENOMEM;
+	}
 
 	ret = str_to_ip(val, &static_entries[arp_static_count].ip);
 	if (ret) {
@@ -331,10 +338,7 @@ static int parse_enable_storage(const char *name, const char *val)
 static int parse_enable_directpath(const char *name, const char *val)
 {
 #ifdef DIRECTPATH
-	cfg_directpath_enabled = true;
-	strncpy(directpath_arg, val, sizeof(directpath_arg) - 1);
-	directpath_arg[sizeof(directpath_arg) - 1] = '\0';
-	return 0;
+	return directpath_parse_arg(name, val);
 #else
 	log_err("cfg: cannot enable directpath, "
 		"please recompile with directpath support");
@@ -354,6 +358,11 @@ static int parse_enable_gc(const char *name, const char *val)
 #endif
 }
 
+static int parse_enable_transparent_hugepages(const char *name, const char *val)
+{
+  cfg_transparent_hugepages_enabled = true;
+  return 0;
+}
 
 /*
  * Parsing Infrastructure
@@ -390,6 +399,7 @@ static const struct cfg_handler cfg_handlers[] = {
 	{ "enable_storage", parse_enable_storage, false },
 	{ "enable_directpath", parse_enable_directpath, false },
 	{ "enable_gc", parse_enable_gc, false },
+	{ "enable_transparent_hugepages", parse_enable_transparent_hugepages, false},
 
 };
 
@@ -501,17 +511,14 @@ int cfg_load(const char *path)
 		 cfg_prio_is_lc ? "latency critical (LC)" : "best effort (BE)");
 	log_info("cfg: THRESH_QD: %ld, THRESH_HT: %ld THRESH_QUANTUM: %ld",
 		 cfg_qdelay_us, cfg_ht_punish_us, cfg_quantum_us);
-	log_info("cfg: storage %s, directpath %s",
+	log_info("cfg: storage %s, directpath %s, transparent hugepages %s",
 #ifdef DIRECT_STORAGE
 		 cfg_storage_enabled ? "enabled" : "disabled",
 #else
 		"disabled",
 #endif
-#ifdef DIRECTPATH
-		 cfg_directpath_enabled ? "enabled" : "disabled");
-#else
-		"disabled");
-#endif
+		 cfg_directpath_enabled() ? "enabled" : "disabled",
+		 cfg_transparent_hugepages_enabled ? "enabled" : "disabled");
 
 out:
 	fclose(f);

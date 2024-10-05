@@ -85,23 +85,24 @@ struct tcpconn {
 	struct trans_entry	e;
 	struct tcp_pcb		pcb;
 	struct list_node	global_link;
-	struct list_node	queue_link;
+	uint64_t                next_timeout;
 	spinlock_t		lock;
+	bool			nonblocking;
 	struct kref		ref;
 	int			err; /* error code for read(), write(), etc. */
 	uint32_t		winmax; /* initial receive window size */
 
 	/* ingress path */
-	unsigned int		rx_closed:1;
-	unsigned int		rx_exclusive:1;
+	bool			rx_closed;
+	bool			rx_exclusive;
 	waitq_t			rx_wq;
 	unsigned int		rxq_ooo_len;
 	struct list_head	rxq_ooo;
 	struct list_head	rxq;
 
 	/* egress path */
-	unsigned int		tx_closed:1;
-	unsigned int		tx_exclusive:1;
+	bool			tx_closed;
+	bool			tx_exclusive;
 	waitq_t			tx_wq;
 	uint32_t		tx_last_ack;
 	uint32_t		tx_last_win;
@@ -111,7 +112,6 @@ struct tcpconn {
 	uint32_t		fast_retransmit_last_ack;
 
 	/* timeouts */
-	uint64_t 		next_timeout;
 	uint64_t		ack_ts;
 	uint64_t		zero_wnd_ts;
 	union {
@@ -122,6 +122,9 @@ struct tcpconn {
 	bool			ack_delayed;
 	int			rep_acks;
 	int			acks_delayed_cnt;
+
+	struct list_node        queue_link;
+
 };
 
 extern tcpconn_t *tcp_conn_alloc(void);

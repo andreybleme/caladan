@@ -9,6 +9,8 @@
 #include <base/log.h>
 #include <base/stddef.h>
 
+#include <sys/utsname.h>
+
 #include <unistd.h>
 
 #include "defs.h"
@@ -18,6 +20,10 @@
 struct iokernel_cfg cfg;
 struct dataplane dp;
 
+unsigned int vfio_prealloc_nrqs = 1;
+bool vfio_prealloc_rmp = true;
+uint32_t nr_vfio_prealloc;
+bool stat_logging;
 bool allowed_cores_supplied;
 DEFINE_BITMAP(input_allowed_cores, NCPU);
 
@@ -25,6 +31,8 @@ struct init_entry {
 	const char *name;
 	int (*init)(void);
 };
+
+pthread_barrier_t init_barrier;
 
 #define IOK_INITIALIZER(name) \
 	{__cstr(name), &name ## _init}
@@ -40,6 +48,7 @@ static const struct init_entry iok_init_handlers[] = {
 	IOK_INITIALIZER(simple),
 	IOK_INITIALIZER(numa),
 	IOK_INITIALIZER(ias),
+	IOK_INITIALIZER(proc_timer),
 
 	/* control plane */
 	IOK_INITIALIZER(control),
@@ -50,6 +59,7 @@ static const struct init_entry iok_init_handlers[] = {
 	IOK_INITIALIZER(tx),
 	IOK_INITIALIZER(dp_clients),
 	IOK_INITIALIZER(dpdk_late),
+	IOK_INITIALIZER(directpath),
 	IOK_INITIALIZER(hw_timestamp),
 
 };
@@ -69,7 +79,38 @@ static int run_init_handlers(const char *phase, const struct init_entry *h,
 		}
 	}
 
+	if (stat_logging) {
+		ret = stats_init();
+		if (ret)
+			return ret;
+	}
+
 	return 0;
+}
+
+static void dataplane_loop_vfio(void)
+{
+	bool work_done;
+
+	log_info("main: core %u running dataplane. [Ctrl+C to quit]",
+			rte_lcore_id());
+	fflush(stdout);
+
+	/* run until quit or killed */
+	for (;;) {
+		work_done = false;
+
+		/* adjust core assignments */
+		sched_poll();
+
+		work_done |= directpath_poll();
+
+		/* handle control messages */
+		if (!work_done)
+			dp_clients_rx_control_lrpcs();
+
+		STAT_INC(LOOPS, 1);
+	}
 }
 
 /*
@@ -78,7 +119,7 @@ static int run_init_handlers(const char *phase, const struct init_entry *h,
 void dataplane_loop(void)
 {
 	bool work_done;
-#ifdef STATS
+#if 0
 	uint64_t next_log_time = microtime();
 #endif
 
@@ -118,11 +159,10 @@ void dataplane_loop(void)
 		if (!work_done)
 			dp_clients_rx_control_lrpcs();
 
-		STAT_INC(BATCH_TOTAL, IOKERNEL_RX_BURST_SIZE);
+		STAT_INC(LOOPS, 1);
 
-#ifdef STATS
+#if 0
 		if (microtime() > next_log_time) {
-			print_stats();
 			dpdk_print_eth_stats();
 			next_log_time += LOG_INTERVAL_US;
 		}
@@ -141,6 +181,7 @@ static void print_usage(void)
 int main(int argc, char *argv[])
 {
 	int i, ret;
+	struct utsname utsname;
 
 	if (getuid() != 0) {
 		fprintf(stderr, "Error: please run as root\n");
@@ -169,8 +210,29 @@ int main(int argc, char *argv[])
 			cfg.nobw = true;
 		} else if (!strcmp(argv[i], "no_hw_qdel")) {
 			cfg.no_hw_qdel = true;
+		} else if (!strcmp(argv[i], "stats")) {
+			stat_logging = true;
 		} else if (!strcmp(argv[i], "selfpair")) {
 			cfg.ias_prefer_selfpair = true;
+		} else if (!strcmp(argv[i], "vfioprealloc")) {
+			if (i == argc - 1) {
+				fprintf(stderr, "missing vfioprealloc argument\n");
+				return -EINVAL;
+			}
+			char *token = strtok(argv[++i], ":");
+			nr_vfio_prealloc = atoi(token);
+			token = strtok(NULL, ":");
+			if (!token) continue;
+			vfio_prealloc_nrqs = atoi(token);
+			token = strtok(NULL, ":");
+			if (!token) continue;
+			vfio_prealloc_rmp = atoi(token);
+		} else if (!strcmp(argv[i], "vfio")) {
+#ifndef DIRECTPATH
+			log_err("please recompile with CONFIG_DIRECTPATH=y");
+			return -EINVAL;
+#endif
+			cfg.vfio_directpath = true;
 		} else if (!strcmp(argv[i], "bwlimit")) {
 			if (i == argc - 1) {
 				fprintf(stderr, "missing bwlimit argument\n");
@@ -201,6 +263,11 @@ int main(int argc, char *argv[])
 			managed_numa_node = atoi(argv[++i]);
 		} else if (!strcmp(argv[i], "noidlefastwake")) {
 			cfg.noidlefastwake = true;
+		} else if (!strcmp(argv[i], "dpactiverss")) {
+			cfg.directpath_active_rss = true;
+		} else if (!strcmp(argv[i], "nohugepages")) {
+			cfg.no_hugepages = true;
+			cfg_transparent_hugepages_enabled = true;
 		} else if (!strcmp(argv[i], "--")) {
 			dpdk_argv = &argv[i+1];
 			dpdk_argc = argc - i - 1;
@@ -214,11 +281,36 @@ int main(int argc, char *argv[])
 		}
 	}
 
+	ret = uname(&utsname);
+	if (ret < 0) {
+		log_err("failed to get utsname");
+		return ret;
+	}
+
+	if (strstr(utsname.release, "azure")) {
+		log_info("Detected Azure VM, using Azure ARP mode");
+		cfg.azure_arp_mode = true;
+	}
+
+	pthread_barrier_init(&init_barrier, NULL, 2);
+
 	ret = run_init_handlers("iokernel", iok_init_handlers,
 			ARRAY_SIZE(iok_init_handlers));
 	if (ret)
 		return ret;
 
-	dataplane_loop();
+	iok_info->cycles_per_us = cycles_per_us;
+	iok_info->external_directpath_enabled = cfg.vfio_directpath;
+	iok_info->external_directpath_rmp = vfio_prealloc_rmp;
+	iok_info->transparent_hugepages = cfg_transparent_hugepages_enabled;
+
+	pthread_barrier_wait(&init_barrier);
+
+	ksched_uintr_init();
+
+	if (cfg.vfio_directpath)
+		dataplane_loop_vfio();
+	else
+		dataplane_loop();
 	return 0;
 }

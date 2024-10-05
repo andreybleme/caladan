@@ -20,10 +20,6 @@ LIST_HEAD(all_procs);
 static DEFINE_BITMAP(ias_idle_cores, NCPU);
 /* a bitmap of all cores that tasks have reserved */
 static DEFINE_BITMAP(ias_reserved_cores, NCPU);
-/* used for calculating a unique index number */
-static struct ias_data *ias_procs[IAS_NPROC];
-/* used for calculating a unique index number */
-static unsigned int ias_procs_nr;
 /* the current process running on each core */
 struct ias_data *cores[NCPU];
 /* the generation number (to detect context switches on a core) */
@@ -35,13 +31,67 @@ uint64_t now_us;
 static int owners[NCPU];
 #endif
 
+/* process that are currently congested sorted by current active thread count */
+struct list_head congested_procs[NCPU + 1];
+/* number of congested lc procs */
+uint64_t congested_lc_procs_nr;
+
+/*
+ * make sure sd is in the right congestion list, should be called any time
+ * sd->thread_active changes.
+ */
+static void ias_update_congestion(struct ias_data *sd)
+{
+	uint64_t congestion_rank;
+
+	if (!sd->is_congested)
+		return;
+
+	congestion_rank = sd->threads_active;
+
+	/* don't allow BE tasks to occupy rank 0 */
+	congestion_rank += !sd->is_lc * !sd->threads_active;
+
+	list_del(&sd->congested_link);
+	list_add_tail(&congested_procs[congestion_rank], &sd->congested_link);
+}
+
+static void ias_mark_congested(struct ias_data *sd)
+{
+	uint64_t congestion_rank;
+
+	if (sd->is_congested)
+		return;
+
+	congestion_rank = sd->threads_active;
+
+	congested_lc_procs_nr += sd->is_lc;
+	congestion_rank += !sd->is_lc * !sd->threads_active;
+
+	sd->is_congested = true;
+	list_add_tail(&congested_procs[congestion_rank], &sd->congested_link);
+}
+
+static void ias_unmark_congested(struct ias_data *sd)
+{
+	if (!sd->is_congested)
+		return;
+
+	congested_lc_procs_nr -= sd->is_lc;
+
+	sd->is_congested = false;
+	list_del(&sd->congested_link);
+}
+
 static void ias_cleanup_core(unsigned int core)
 {
 	struct ias_data *sd = cores[core];
 
 	if (sd) {
+		sd->last_run_us = now_us;
 		sd->loc_last_us[core] = now_us;
 		sd->threads_active--;
+		ias_update_congestion(sd);
 	}
 	cores[core] = NULL;
 }
@@ -52,8 +102,6 @@ static int ias_attach(struct proc *p, struct sched_spec *sched_cfg)
 	int i, core, sib;
 
 	/* validate parameters */
-	if (ias_procs_nr >= IAS_NPROC)
-		return -ENOENT;
 	if (!cfg.noht && sched_cfg->guaranteed_cores % 2 != 0) {
 		log_err("ias: tried to attach proc with odd number of guaranteed cores");
 		return -EINVAL;
@@ -79,6 +127,7 @@ static int ias_attach(struct proc *p, struct sched_spec *sched_cfg)
 
 	/* reserve priority cores */
 	i = sd->threads_guaranteed;
+	sd->has_core_resv = i > 0;
 	while (i > 0) {
 		core = bitmap_find_next_cleared(ias_reserved_cores, NCPU, 0);
 		if (core == NCPU)
@@ -103,16 +152,6 @@ static int ias_attach(struct proc *p, struct sched_spec *sched_cfg)
 #endif
 	}
 
-	/* reserve a unique index */
-	for (i = 0; i < ias_procs_nr; i++) {
-		if (ias_procs[i] == NULL) {
-			sd->idx = i;
-			ias_procs[i] = sd;
-			return 0;
-		}
-	}
-	sd->idx = ias_procs_nr;
-	ias_procs[ias_procs_nr++] = sd;
 	return 0;
 
 fail_reserve:
@@ -129,10 +168,6 @@ static void ias_detach(struct proc *p)
 	struct ias_data *sd = (struct ias_data *)p->policy_data;
 	int i;
 
-	ias_procs[sd->idx] = NULL;
-	if (sd->idx == ias_procs_nr)
-		ias_procs_nr--;
-
 	list_del_from(&all_procs, &sd->all_link);
 	bitmap_xor(ias_reserved_cores, ias_reserved_cores,
 		   sd->reserved_cores, NCPU);
@@ -141,6 +176,8 @@ static void ias_detach(struct proc *p)
 		if (cores[i] == sd)
 			cores[i] = NULL;
 	}
+
+	ias_unmark_congested(sd);
 
 	free(sd);
 }
@@ -168,6 +205,8 @@ static int ias_run_kthread_on_core(struct ias_data *sd, unsigned int core)
 	ias_gen[core]++;
 	bitmap_clear(ias_idle_cores, core);
 	sd->threads_active++;
+	sd->waking = true;
+	ias_update_congestion(sd);
 	return 0;
 }
 
@@ -193,6 +232,7 @@ int ias_idle_placeholder_on_core(struct ias_data *sd, unsigned int core)
 	ias_gen[core]++;
 	bitmap_set(ias_idle_cores, core);
 	sd->threads_active++;
+	ias_update_congestion(sd);
 	return 0;
 }
 
@@ -222,6 +262,7 @@ int ias_idle_on_core(unsigned int core)
 static bool ias_can_preempt_core(struct ias_data *sd, unsigned int core)
 {
 	struct ias_data *cur = cores[core];
+	struct thread *th;
 
 	/* any task can take idle cores */
 	if (cur == NULL)
@@ -231,15 +272,23 @@ static bool ias_can_preempt_core(struct ias_data *sd, unsigned int core)
 	if (sd == cur)
 		return false;
 	/* can't preempt if the current task reserved this core */
-	if (bitmap_test(cur->reserved_cores, core))
+	if (cur->has_core_resv && bitmap_test(cur->reserved_cores, core))
 		return false;
 	/* BE tasks can't preempt LC tasks */
 	if (cur->is_lc && !sd->is_lc)
 		return false;
 	/* can't preempt a task that will be using <= burst cores */
 	if (cur->is_lc == sd->is_lc &&
-	    (int)cur->threads_active - (int)cur->threads_guaranteed <=
-	    (int)sd->threads_active - (int)sd->threads_guaranteed + 1) {
+	    cur->threads_active - cur->threads_guaranteed <=
+	    sd->threads_active - sd->threads_guaranteed + 1) {
+
+		/* preempt a BE task running for greater than IAS_QUANTA_US */
+		if (!cur->is_lc && sd->threads_active == 0) {
+			th = sched_get_thread_on_core(core);
+			if (th && th->metrics.kthread_elapsed_us >= IAS_QUANTA_US)
+				return true;
+		}
+
 		return false;
 	}
 
@@ -264,6 +313,10 @@ static float ias_locality_score(struct ias_data *sd, unsigned int core)
 	if (!cfg.noht && cores[sib] == sd)
 		return 1.0f;
 
+	/* avoid checking loc_last_us array for very cold procs */
+	if (now_us - sd->last_run_us > IAS_LOC_EVICTED_US)
+		return 0.0f;
+
 	delta_us = now_us - MAX(sd->loc_last_us[core],
 				cfg.noht ? 0 : sd->loc_last_us[sib]);
 	if (delta_us >= IAS_LOC_EVICTED_US)
@@ -278,7 +331,7 @@ static float ias_core_score(struct ias_data *sd, unsigned int core)
 
 	score = ias_locality_score(sd, core);
 
-	if (bitmap_test(sd->reserved_cores, core))
+	if (sd->has_core_resv && bitmap_test(sd->reserved_cores, core))
 		score += 7.0f;
 
 	if (cfg.noht)
@@ -369,47 +422,86 @@ done:
 	return ias_run_kthread_on_core(sd, core);
 }
 
-static int ias_notify_core_needed(struct proc *p)
+static bool ias_should_add_kthread_now(struct ias_data *sd)
 {
-	struct ias_data *sd = (struct ias_data *)p->policy_data;
-	return ias_add_kthread(sd);
+	return congested_lc_procs_nr == 0;
 }
 
-static void ias_notify_congested(struct proc *p, bool busy, uint64_t delay,
-				 bool parked_thread_delay)
+static int ias_notify_core_needed(struct proc *p)
+{
+	int ret;
+	struct ias_data *sd = (struct ias_data *)p->policy_data;
+
+	if (ias_should_add_kthread_now(sd)) {
+		ret = ias_add_kthread(sd);
+		if (!ret)
+			return 0;
+	}
+
+	ias_mark_congested(sd);
+	return 0;
+}
+
+static bool ias_can_unpoll(struct ias_data *sd)
+{
+	bool is_congested = sd->is_congested;
+	assert(is_congested);
+	/* this process is starved and in the high priority waiting list */
+	return sd->threads_active == 0;
+}
+
+static bool ias_notify_congested(struct proc *p, struct delay_info *delay)
 {
 	struct ias_data *sd = (struct ias_data *)p->policy_data;
 	int ret;
 	bool congested;
 
 	/* detect congestion */
-	congested = sd->qdelay_us == 0 ? busy : delay >= sd->qdelay_us;
-	congested |= parked_thread_delay;
+	congested = sd->qdelay_us == 0 ?
+		        delay->standing_queue : delay->max_delay_us >= sd->qdelay_us;
+	congested |= delay->parked_thread_busy;
+
+	if (sd->is_lc && delay->parked_thread_busy)
+		STAT_INC(PARKED_THREAD_BUSY_WAKE, 1);
 
 	/* stop if there is no congestion */
 	if (!congested) {
-		sd->is_congested = false;
-		return;
+		ias_unmark_congested(sd);
+		return false;
 	}
 
-	/* try to add an additional core right away */
-	ret = ias_add_kthread(sd);
-	if (!ret)
-		return;
+	if (sd->waking) {
+		sd->waking = false;
+		return false;
+	}
+
+	if (sd->is_congested)
+		return ias_can_unpoll(sd);
+
+	if (ias_should_add_kthread_now(sd)) {
+		/* try to add an additional core right away */
+		ret = ias_add_kthread(sd);
+		if (!ret)
+			return false;
+	}
 
 	/* otherwise mark the process as congested, cores can be added later */
-	sd->is_congested = true;
+	ias_mark_congested(sd);
+	return ias_can_unpoll(sd);
 }
 
 static int ias_kthread_score(struct ias_data *sd, int core)
 {
-	bool has_resv = bitmap_test(sd->reserved_cores, core);
+	bool has_resv = sd->has_core_resv;
 	bool is_lc = sd->is_lc;
 	int burst_score;
 
-	burst_score = (int)sd->threads_active - (int)sd->threads_guaranteed;
+	burst_score = sd->threads_active - sd->threads_guaranteed;
 	burst_score = MAX(burst_score, 0);
 	burst_score = NCPU - burst_score;
+
+	if (has_resv)
+		has_resv = bitmap_test(sd->reserved_cores, core);
 
 	return has_resv * NCPU * 4 + is_lc * NCPU * 2 + burst_score;
 }
@@ -417,25 +509,37 @@ static int ias_kthread_score(struct ias_data *sd, int core)
 static struct ias_data *ias_choose_kthread(unsigned int core)
 {
 	struct ias_data *sd, *best_sd = NULL;
-	int score, best_score = -1;
+	int rank, score, best_score = -1;
 
-	ias_for_each_proc(sd) {
-		/* only congested processes need more cores */
-		if (!sd->is_congested)
-			continue;
+	/* feed starving LCs in a FIFO order */
+	list_for_each(&congested_procs[0], sd, congested_link) {
 		/* check if we're constrained by the thread limit */
 		if (sd->threads_active >= sd->threads_limit)
 			continue;
 
-		/* try to estimate how good this core is for the process */
-		score = ias_kthread_score(sd, core);
-		if (score > best_score) {
-			best_score = score;
-			best_sd = sd;
-		}
+		return sd;
 	}
 
-	return best_sd;
+	/* check remaining congested procs */
+	for (rank = 1; rank < sched_cores_nr + 1; rank++) {
+		list_for_each(&congested_procs[rank], sd, congested_link) {
+			/* check if we're constrained by the thread limit */
+			if (sd->threads_active >= sd->threads_limit)
+				continue;
+
+			/* try to estimate how good this core is for the process */
+			score = ias_kthread_score(sd, core);
+			if (score > best_score) {
+				best_score = score;
+				best_sd = sd;
+			}
+		}
+
+		if (best_sd)
+			return best_sd;
+	}
+
+	return NULL;
 }
 
 /**
@@ -508,7 +612,7 @@ static void ias_print_debug_info(void)
 
 static void ias_sched_poll(uint64_t now, int idle_cnt, bitmap_ptr_t idle)
 {
-	static uint64_t last_us;
+	static uint64_t last_us, last_core_ts_us;
 #ifdef IAS_DEBUG
 	static uint64_t debug_ts = 0;
 #endif
@@ -525,7 +629,7 @@ static void ias_sched_poll(uint64_t now, int idle_cnt, bitmap_ptr_t idle)
 		if (bitmap_test(ias_ht_punished_cores, core))
 			continue;
 		if (cores[core] != NULL)
-			cores[core]->is_congested = false;
+			ias_unmark_congested(cores[core]);
 		ias_cleanup_core(core);
 		ias_add_kthread_on_core(core);
 	}
@@ -538,6 +642,11 @@ static void ias_sched_poll(uint64_t now, int idle_cnt, bitmap_ptr_t idle)
 		if (!cfg.noht)
 			ias_ht_poll();
 		ias_ts_poll();
+	}
+
+	if (now - last_core_ts_us >= IAS_QUANTA_US) {
+		last_core_ts_us = now;
+		ias_core_ts_poll();
 	}
 
 #ifdef IAS_DEBUG
@@ -563,9 +672,14 @@ struct sched_ops ias_ops = {
  */
 int ias_init(void)
 {
+	unsigned int i;
+
 	bitmap_init(ias_reserved_cores, NCPU, true);
 	bitmap_xor(ias_reserved_cores, ias_reserved_cores, sched_allowed_cores,
 		   NCPU);
+
+	for (i = 0; i < sched_cores_nr + 1; i++)
+		list_head_init(&congested_procs[i]);
 
 	return ias_bw_init();
 }

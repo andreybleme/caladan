@@ -63,12 +63,11 @@ bool rx_send_to_runtime(struct proc *p, uint32_t hash, uint64_t cmd,
 	if (likely(sched_threads_active(p) > 0)) {
 		/* use the flow table to route to an active thread */
 		th = &p->threads[p->flow_tbl[hash % p->thread_count]];
+		thread_enable_sched_poll(th);
 		return lrpc_send(&th->rxq, cmd, payload);
 	}
 
-
-	if (!cfg.noidlefastwake)
-		sched_add_core(p);
+	sched_add_core(p);
 	if (unlikely(sched_threads_active(p) == 0)) {
 		/* enqueue to an idle thread (to be woken later) */
 		th = list_top(&p->idle_threads, struct thread, idle_link);
@@ -76,6 +75,8 @@ bool rx_send_to_runtime(struct proc *p, uint32_t hash, uint64_t cmd,
 		/* use the flow table to route to an active thread */
 		th = &p->threads[p->flow_tbl[hash % p->thread_count]];
 	}
+
+	thread_enable_sched_poll(th);
 	return lrpc_send(&th->rxq, cmd, payload);
 }
 
@@ -88,12 +89,39 @@ static bool rx_send_pkt_to_runtime(struct proc *p, struct rx_net_hdr *hdr)
 	return rx_send_to_runtime(p, hdr->rss_hash, RX_NET_RECV, shmptr);
 }
 
-static void rx_one_pkt(struct rte_mbuf *buf)
+static bool azure_arp_response(struct rte_mbuf *buf)
 {
 	struct rte_ether_hdr *ptr_mac_hdr;
+	struct rte_arp_hdr *arphdr;
+	static struct rte_ether_addr azure_eth_addr = {{0x12, 0x34, 0x56, 0x78, 0x9a, 0xbc}};
+
+	log_debug("sending an arp response");
+
+	ptr_mac_hdr = rte_pktmbuf_mtod(buf, struct rte_ether_hdr *);
+	rte_ether_addr_copy(&ptr_mac_hdr->src_addr, &ptr_mac_hdr->dst_addr);
+	rte_ether_addr_copy(&azure_eth_addr, &ptr_mac_hdr->src_addr);
+
+	arphdr = rte_pktmbuf_mtod_offset(buf, struct rte_arp_hdr *,
+                        sizeof(*ptr_mac_hdr));
+	arphdr->arp_opcode = rte_cpu_to_be_16(RTE_ARP_OP_REPLY);
+	rte_ether_addr_copy(&azure_eth_addr, &arphdr->arp_data.arp_sha);
+        rte_ether_addr_copy(&ptr_mac_hdr->dst_addr, &arphdr->arp_data.arp_tha);
+	swapvars(arphdr->arp_data.arp_sip, arphdr->arp_data.arp_tip);
+
+	return rte_eth_tx_burst(dp.port, 0, &buf, 1) == 1;
+}
+
+static void rx_one_pkt(struct rte_mbuf *buf)
+{
+	int ret;
+	struct proc *p;
+	struct rte_arp_hdr *arphdr;
+	struct rte_ether_hdr *ptr_mac_hdr;
 	struct rte_ether_addr *ptr_dst_addr;
+	struct rte_ipv4_hdr *iphdr;
 	struct rx_net_hdr *net_hdr;
-	int i, ret;
+	uint16_t ether_type;
+	uint32_t dst_ip;
 
 	ptr_mac_hdr = rte_pktmbuf_mtod(buf, struct rte_ether_hdr *);
 	ptr_dst_addr = &ptr_mac_hdr->dst_addr;
@@ -101,59 +129,75 @@ static void rx_one_pkt(struct rte_mbuf *buf)
 		  PRIx8 " %02" PRIx8 " %02" PRIx8 " %02" PRIx8,
 		  ptr_dst_addr->addr_bytes[0], ptr_dst_addr->addr_bytes[1],
 		  ptr_dst_addr->addr_bytes[2], ptr_dst_addr->addr_bytes[3],
-		  ptr_dst_addr->addr_bytes[4], ptr_dst_addr->addr_bytes[5]);
+	  ptr_dst_addr->addr_bytes[4], ptr_dst_addr->addr_bytes[5]);
 
-	/* handle unicast destinations (send to a single runtime) */
-	if (likely(rte_is_unicast_ether_addr(ptr_dst_addr))) {
-		void *data;
-		struct proc *p;
+	ether_type = rte_be_to_cpu_16(ptr_mac_hdr->ether_type);
 
-		/* lookup runtime by MAC in hash table */
-		ret = rte_hash_lookup_data(dp.mac_to_proc,
-				&ptr_dst_addr->addr_bytes[0], &data);
-		if (unlikely(ret < 0)) {
-			STAT_INC(RX_UNREGISTERED_MAC, 1);
-			log_debug_ratelimited("rx: received packet for unregistered MAC");
-			rte_pktmbuf_free(buf);
-			return;
-		}
+	if (likely(ether_type == ETHTYPE_IP)) {
+		iphdr = rte_pktmbuf_mtod_offset(buf, struct rte_ipv4_hdr *,
+			sizeof(*ptr_mac_hdr));
+		dst_ip = rte_be_to_cpu_32(iphdr->dst_addr);
+	} else if (ether_type == ETHTYPE_ARP) {
+		arphdr = rte_pktmbuf_mtod_offset(buf, struct rte_arp_hdr *,
+			sizeof(*ptr_mac_hdr));
+		dst_ip = rte_be_to_cpu_32(arphdr->arp_data.arp_tip);
 
-		p = (struct proc *)data;
-		net_hdr = rx_prepend_rx_preamble(buf);
-		if (!rx_send_pkt_to_runtime(p, net_hdr)) {
-			STAT_INC(RX_UNICAST_FAIL, 1);
-			log_debug_ratelimited("rx: failed to send unicast packet to runtime");
-			rte_pktmbuf_free(buf);
-		}
-		return;
-	}
-
-	/* handle broadcast destinations (send to all runtimes) */
-	if (rte_is_broadcast_ether_addr(ptr_dst_addr) && dp.nr_clients > 0) {
-		bool success;
-		int n_sent = 0;
-
-		net_hdr = rx_prepend_rx_preamble(buf);
-		for (i = 0; i < dp.nr_clients; i++) {
-			success = rx_send_pkt_to_runtime(dp.clients[i], net_hdr);
-			if (success) {
-				n_sent++;
-			} else {
-				STAT_INC(RX_BROADCAST_FAIL, 1);
-				log_debug_ratelimited("rx: failed to enqueue broadcast "
-					 "packet to runtime");
+		// Azure's faked ARP replies always go to the default NIC
+		// address, so broadcast them to all runtimes.
+		if (cfg.azure_arp_mode &&
+		    arphdr->arp_opcode == rte_cpu_to_be_16(RTE_ARP_OP_REPLY)) {
+			bool success;
+			int n_sent = 0;
+			net_hdr = rx_prepend_rx_preamble(buf);
+			for (int i = 0; i < dp.nr_clients; i++) {
+				success = rx_send_pkt_to_runtime(dp.clients[i], net_hdr);
+				if (success) {
+					n_sent++;
+				} else {
+					STAT_INC(RX_BROADCAST_FAIL, 1);
+					log_debug_ratelimited("rx: failed to enqueue broadcast "
+					                      "packet to runtime");
+				}
 			}
-		}
-
-		if (n_sent == 0) {
-			rte_pktmbuf_free(buf);
+			if (n_sent == 0)
+				rte_pktmbuf_free(buf);
+			else
+				rte_mbuf_refcnt_update(buf, n_sent - 1);
 			return;
 		}
-		rte_mbuf_refcnt_update(buf, n_sent - 1);
-		return;
+	} else {
+		log_debug("unrecognized ether type");
+		goto fail_free;
 	}
 
-	/* everything else */
+	/* lookup runtime by IP in hash table */
+	ret = rte_hash_lookup_data(dp.ip_to_proc, &dst_ip, (void **)&p);
+	if (unlikely(ret < 0)) {
+
+		if (cfg.azure_arp_mode && ether_type == ETHTYPE_ARP &&
+		    arphdr->arp_opcode == rte_cpu_to_be_16(RTE_ARP_OP_REQUEST) &&
+		    azure_arp_response(buf))
+			return;
+
+		STAT_INC(RX_UNREGISTERED_MAC, 1);
+		goto fail_free;
+	}
+
+	net_hdr = rx_prepend_rx_preamble(buf);
+	if (!rx_send_pkt_to_runtime(p, net_hdr)) {
+		STAT_INC(RX_UNICAST_FAIL, 1);
+		goto fail_free;
+	}
+
+	if (unlikely(p->has_directpath)) {
+		if (!cfg.azure_arp_mode && ether_type == ETHTYPE_IP)
+			log_warn_ratelimited("delivering an IP packet to a directpath runtime");
+	}
+
+	return;
+
+fail_free:
+	/* anything else */
 	log_debug("rx: unhandled packet with MAC %x %x %x %x %x %x",
 		 ptr_dst_addr->addr_bytes[0], ptr_dst_addr->addr_bytes[1],
 		 ptr_dst_addr->addr_bytes[2], ptr_dst_addr->addr_bytes[3],
@@ -291,6 +335,9 @@ fail:
  */
 int rx_init()
 {
+	if (cfg.vfio_directpath)
+		return 0;
+
 	/* create a mempool in shared memory to hold the rx mbufs */
 	dp.rx_mbuf_pool = rx_pktmbuf_pool_create_in_shm("RX_MBUF_POOL",
 			IOKERNEL_NUM_MBUFS, MBUF_CACHE_SIZE, 0, RTE_MBUF_DEFAULT_BUF_SIZE,

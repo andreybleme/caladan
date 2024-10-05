@@ -1,8 +1,3 @@
-#![allow(non_upper_case_globals)]
-#![allow(non_camel_case_types)]
-#![allow(non_snake_case)]
-#![feature(asm_sym)]
-#![feature(thread_local)]
 #![feature(new_uninit)]
 #![feature(get_mut_unchecked)]
 
@@ -17,14 +12,8 @@ use std::sync::atomic::{AtomicI32, Ordering};
 use std::sync::Arc;
 use std::time::Duration;
 
-// https://github.com/rust-lang/rust-bindgen/issues/1651
-#[allow(deref_nullptr)]
-#[allow(unaligned_references)]
-pub mod ffi {
-    include!(concat!(env!("OUT_DIR"), "/bindings.rs"));
-}
-
 mod asm;
+pub mod ffi;
 pub mod storage;
 pub mod tcp;
 pub mod thread;
@@ -42,10 +31,12 @@ fn convert_error(ret: c_int) -> Result<(), i32> {
 
 #[inline]
 pub fn preempt_enable() {
+    let cnt: u32;
     unsafe {
         std::sync::atomic::compiler_fence(std::sync::atomic::Ordering::SeqCst);
-        asm!("dec DWORD PTR fs:{0}@TPOFF", sym ffi::preempt_cnt);
-        if ffi::preempt_cnt == 0 {
+        asm!("dec DWORD PTR gs:[rip + {0}]", sym ffi::__perthread_preempt_cnt);
+        asm!("mov {0:e}, DWORD PTR gs:[rip + {1}]", out(reg) cnt, sym ffi::__perthread_preempt_cnt);
+        if cnt == 0 {
             ffi::preempt();
         }
     }
@@ -54,7 +45,7 @@ pub fn preempt_enable() {
 #[inline]
 pub fn preempt_disable() {
     unsafe {
-        asm!("inc DWORD PTR fs:{0}@TPOFF", sym ffi::preempt_cnt);
+        asm!("inc DWORD PTR gs:[rip + {0}]", sym ffi::__perthread_preempt_cnt);
         std::sync::atomic::compiler_fence(std::sync::atomic::Ordering::SeqCst);
     }
 }

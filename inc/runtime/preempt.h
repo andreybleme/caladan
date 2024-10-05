@@ -5,9 +5,16 @@
 #pragma once
 
 #include <base/stddef.h>
+#include <base/thread.h>
 
-extern __thread volatile unsigned int preempt_cnt;
+DECLARE_PERTHREAD(unsigned int, preempt_cnt);
+DECLARE_PERTHREAD(void *, uintr_stack);
+
 extern void preempt(void);
+extern void uintr_asm_return(void);
+
+extern size_t xsave_max_size;
+extern size_t xsave_features;
 
 /* this flag is set whenever there is _not_ a pending preemption */
 #define PREEMPT_NOT_PENDING	(1 << 31)
@@ -17,9 +24,9 @@ extern void preempt(void);
  *
  * Can be nested.
  */
-static inline void preempt_disable(void)
+static __always_inline __nofp void preempt_disable(void)
 {
-	asm volatile("addl $1, %%fs:preempt_cnt@tpoff" : : : "memory", "cc");
+	asm volatile("addl $1, %%gs:__perthread_preempt_cnt(%%rip)" ::: "memory", "cc");
 	barrier();
 }
 
@@ -31,7 +38,7 @@ static inline void preempt_disable(void)
 static inline void preempt_enable_nocheck(void)
 {
 	barrier();
-	asm volatile("subl $1, %%fs:preempt_cnt@tpoff" : : : "memory", "cc");
+	perthread_decr(preempt_cnt);
 }
 
 /**
@@ -39,16 +46,16 @@ static inline void preempt_enable_nocheck(void)
  *
  * Can be nested.
  */
-static inline void preempt_enable(void)
+static __always_inline __nofp void preempt_enable(void)
 {
 #ifndef __GCC_ASM_FLAG_OUTPUTS__
 	preempt_enable_nocheck();
-	if (unlikely(preempt_cnt == 0))
+	if (unlikely(perthread_read(preempt_cnt) == 0))
 		preempt();
 #else
 	int zero;
 	barrier();
-	asm volatile("subl $1, %%fs:preempt_cnt@tpoff"
+	asm volatile("subl $1, %%gs:__perthread_preempt_cnt(%%rip)"
 		     : "=@ccz" (zero) :: "memory", "cc");
 	if (unlikely(zero))
 		preempt();
@@ -60,15 +67,15 @@ static inline void preempt_enable(void)
  */
 static inline bool preempt_needed(void)
 {
-	return (preempt_cnt & PREEMPT_NOT_PENDING) == 0;
+	return (perthread_read(preempt_cnt) & PREEMPT_NOT_PENDING) == 0;
 }
 
 /**
  * preempt_enabled - returns true if preemption is enabled
  */
-static inline bool preempt_enabled(void)
+static __always_inline __nofp bool preempt_enabled(void)
 {
-	return (preempt_cnt & ~PREEMPT_NOT_PENDING) == 0;
+	return (perthread_read(preempt_cnt) & ~PREEMPT_NOT_PENDING) == 0;
 }
 
 /**
@@ -85,5 +92,6 @@ static inline void assert_preempt_disabled(void)
  */
 static inline void clear_preempt_needed(void)
 {
-	preempt_cnt = preempt_cnt | PREEMPT_NOT_PENDING;
+	BUILD_ASSERT(PREEMPT_NOT_PENDING == 0x80000000);
+	perthread_ori(preempt_cnt, 0x80000000);
 }

@@ -18,6 +18,7 @@
 #define IAS_LOC_EVICTED_US		100
 /* the debug info printing interval */
 #define IAS_DEBUG_PRINT_US		1000000
+#define IAS_QUANTA_US			2000
 
 
 /*
@@ -27,19 +28,23 @@
 struct ias_data {
 	struct proc		*p;
 	unsigned int		is_congested:1;
+	unsigned int       	has_core_resv:1;
 	unsigned int		is_bwlimited:1;
 	unsigned int		is_lc:1;
-	unsigned int		idx; /* a unique index */
+	unsigned int		waking:1;
 	uint64_t		qdelay_us;
-	uint64_t		quantum_us;
-	struct list_node	all_link;
-	DEFINE_BITMAP(reserved_cores, NCPU);
+	uint64_t		last_run_us;
 
 	/* thread usage limits */
-	int			threads_guaranteed;/* the number promised */
-	int			threads_max;	/* the most possible */
-	int			threads_limit;	/* the most allowed */
-	int			threads_active;	/* the number active */
+	int16_t			threads_guaranteed;/* the number promised */
+	int16_t			threads_max;	/* the most possible */
+	int16_t			threads_limit;	/* the most allowed */
+	int16_t			threads_active;	/* the number active */
+
+	struct list_node	congested_link;
+	struct list_node	starved_link;
+
+	DEFINE_BITMAP(reserved_cores, NCPU);
 
 	/* locality subcontroller */
 	uint64_t		loc_last_us[NCPU];
@@ -48,7 +53,11 @@ struct ias_data {
 	uint64_t		ht_punish_us;
 	uint64_t		ht_punish_count;
 
+	/* the time sharing subcontroller */
+	uint64_t		quantum_us;
+
 	/* memory bandwidth subcontroller */
+	struct list_node	all_link;
 	float			bw_llc_miss_rate;
 };
 
@@ -56,6 +65,8 @@ extern struct list_head all_procs;
 extern struct ias_data *cores[NCPU];
 extern uint64_t ias_gen[NCPU];
 extern uint64_t now_us;
+extern struct list_head congested_procs[NCPU + 1];
+extern uint64_t congested_lc_procs_nr;
 
 /**
  * ias_for_each_proc - iterates through all processes
@@ -107,6 +118,7 @@ extern float ias_bw_estimate_multiplier;
  */
 
 extern void ias_ts_poll(void);
+extern void ias_core_ts_poll(void);
 
 
 /*

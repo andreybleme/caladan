@@ -29,7 +29,7 @@ static inline int atomic_fetch_and_add(atomic_t *a, int val)
 
 static inline int atomic_fetch_and_sub(atomic_t *a, int val)
 {
-	return __sync_fetch_and_add(&a->cnt, val);
+	return __sync_fetch_and_sub(&a->cnt, val);
 }
 
 static inline long atomic_fetch_and_or(atomic_t *a, int val)
@@ -45,11 +45,6 @@ static inline long atomic_fetch_and_xor(atomic_t *a, int val)
 static inline long atomic_fetch_and_and(atomic_t *a, int val)
 {
 	return __sync_fetch_and_and(&a->cnt, val);
-}
-
-static inline long atomic_fetch_and_nand(atomic_t *a, int val)
-{
-	return __sync_fetch_and_nand(&a->cnt, val);
 }
 
 static inline int atomic_add_and_fetch(atomic_t *a, int val)
@@ -117,10 +112,6 @@ static inline long atomic64_fetch_and_xor(atomic64_t *a, long val)
 	return __sync_fetch_and_xor(&a->cnt, val);
 }
 
-static inline long atomic64_fetch_and_nand(atomic64_t *a, long val)
-{
-	return __sync_fetch_and_nand(&a->cnt, val);
-}
 
 static inline long atomic64_fetch_and_and(atomic64_t *a, long val)
 {
