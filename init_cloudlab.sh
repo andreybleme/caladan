@@ -97,13 +97,29 @@ rm iokernel/rx_iok_b.c
 rm iokernel/tx_iok_b.c
 rm iokernel/dp_clients_iok_b.c
 rm iokernel/dpdk_iok_b.c
+rm iokernel/main_iok_b.c
 
 rm iokernel/control.c
 rm iokernel/sched.c
 rm iokernel/rx.c
 rm iokernel/tx.c
 rm iokernel/dp_clients.c
+rm iokernel/dpdk.c
+rm iokernel/main.c
 
+mv iokernel/control_iok_b.c iokernel/control.c
+mv iokernel/sched_iok_b.c iokernel/sched.c
+mv iokernel/rx_iok_b.c iokernel/rx.c
+mv iokernel/tx_iok_b.c iokernel/tx.c
+mv iokernel/dp_clients_iok_b.c iokernel/dp_clients.c
+mv iokernel/dpdk_iok_b.c iokernel/dpdk.c
+mv iokernel/dpdk_iok_b.c iokernel/dpdk.c
+mv iokernel/main_iok_b.c iokernel/main.c
+
+# copy app/sysnthetic from original caladan
+cd caladan
+rm -fr apps/synthetic/
+cp -r ../caladan-original/caladan/apps/synthetic/ apps/
 
 # build syntetic apps (1.79.0-nightly)
 cd apps/synthetic
@@ -117,13 +133,13 @@ cargo build --release
 # start iokerneld
 sudo ./iokerneld
 # run server app
-sudo ./apps/synthetic/target/release/synthetic 128.110.218.117:5000 --config server.config --mode spawner-server
+sudo ./apps/synthetic/target/release/synthetic 128.110.218.42:5000 --config server.config --mode spawner-server
 
 # run client app (always use IP from server node)
-sudo ./apps/synthetic/target/release/synthetic 128.110.218.117:5000 --config client.config --mode runtime-client
+sudo ./apps/synthetic/target/release/synthetic 128.110.218.42:5000 --config client.config --mode runtime-client
 
-# server (node-0): 128.110.218.104/21
-# client (node-1): 128.110.218.86/21
+# server (node-0): 128.110.218.42/21 (multi iokernels)
+# client (node-1): 128.110.218.48/21
 
 # iok A
 # sched: dataplane on 10, control on 0
