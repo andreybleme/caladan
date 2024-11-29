@@ -113,7 +113,6 @@ mv iokernel/rx_iok_b.c iokernel/rx.c
 mv iokernel/tx_iok_b.c iokernel/tx.c
 mv iokernel/dp_clients_iok_b.c iokernel/dp_clients.c
 mv iokernel/dpdk_iok_b.c iokernel/dpdk.c
-mv iokernel/dpdk_iok_b.c iokernel/dpdk.c
 mv iokernel/main_iok_b.c iokernel/main.c
 
 # copy app/sysnthetic from original caladan
@@ -133,13 +132,13 @@ cargo build --release
 # start iokerneld
 sudo ./iokerneld
 # run server app
-sudo ./apps/synthetic/target/release/synthetic 128.110.218.42:5000 --config server.config --mode spawner-server
+sudo ./apps/synthetic/target/release/synthetic 128.110.218.219:5000 --config server.config --mode spawner-server
 
 # run client app (always use IP from server node)
-sudo ./apps/synthetic/target/release/synthetic 128.110.218.42:5000 --config client.config --mode runtime-client
+sudo ./apps/synthetic/target/release/synthetic 128.110.218.219:5000 --config client.config --mode runtime-client
 
-# server (node-0): 128.110.218.42/21 (multi iokernels)
-# client (node-1): 128.110.218.48/21
+# server (node-0): 128.110.218.219/21 (multi iokernels)
+# client (node-1): 128.110.218.118/21
 
 # iok A
 # sched: dataplane on 10, control on 0
