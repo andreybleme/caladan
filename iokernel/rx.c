@@ -213,6 +213,7 @@ bool rx_burst(void)
 {
 	struct rte_mbuf *bufs[IOKERNEL_RX_BURST_SIZE];
 	uint16_t nb_rx, i;
+	uint16_t nb2_rx, j;
 
 	/* retrieve packets from NIC queue */
 	nb_rx = rte_eth_rx_burst(dp.port, 0, bufs, IOKERNEL_RX_BURST_SIZE);
@@ -226,6 +227,20 @@ bool rx_burst(void)
 				 char *));
 		}
 		rx_one_pkt(bufs[i]);
+	}
+
+	/* retrieve packets from NIC queue 2 */
+	nb2_rx = rte_eth_rx_burst(dp.port, 1, bufs, IOKERNEL_RX_BURST_SIZE);
+	STAT_INC(RX_PULLED, nb2_rx);
+	if (nb2_rx > 0)
+		log_debug("rx: received %d packets on port %d, queue 1", nb2_rx, dp.port);
+
+	for (j = 0; j < nb2_rx; j++) {
+		if (j + RX_PREFETCH_STRIDE < nb2_rx) {
+			prefetch(rte_pktmbuf_mtod(bufs[j + RX_PREFETCH_STRIDE],
+					char *));
+		}
+		rx_one_pkt(bufs[j]);
 	}
 
 	return nb_rx > 0;
