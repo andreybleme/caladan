@@ -19,6 +19,9 @@
 #define MBUF_CACHE_SIZE 250
 #define RX_PREFETCH_STRIDE 2
 
+static uint32_t last_dst_ip = 0;
+static struct proc *last_proc = NULL;
+
 
 /*
  * Prepend rx_net_hdr preamble to ingress packets.
@@ -186,18 +189,27 @@ static void rx_one_pkt(struct rte_mbuf *buf)
 		goto fail_free;
 	}
 
-	/* lookup runtime by IP in hash table */
-	ret = rte_hash_lookup_data(dp.ip_to_proc, &dst_ip, (void **)&p);
-	if (unlikely(ret < 0)) {
+	
+	/* use cached dst_ip and last_pro to avoid hash table looups when dst_ip does not change often */
+	if (dst_ip == last_dst_ip && last_proc != NULL) {
+		p = last_proc;
+	} else {
+		/* lookup runtime by IP in hash table */
+		ret = rte_hash_lookup_data(dp.ip_to_proc, &dst_ip, (void **)&p);
+		if (unlikely(ret < 0)) {
+			if (cfg.azure_arp_mode && ether_type == ETHTYPE_ARP &&
+				arphdr->arp_opcode == rte_cpu_to_be_16(RTE_ARP_OP_REQUEST) &&
+				azure_arp_response(buf))
+				return;
 
-		if (cfg.azure_arp_mode && ether_type == ETHTYPE_ARP &&
-		    arphdr->arp_opcode == rte_cpu_to_be_16(RTE_ARP_OP_REQUEST) &&
-		    azure_arp_response(buf))
-			return;
-
-		STAT_INC(RX_UNREGISTERED_MAC, 1);
-		goto fail_free;
+			STAT_INC(RX_UNREGISTERED_MAC, 1);
+			goto fail_free;
+		}
 	}
+	
+	/* cache ip and proc for future lookup */
+	last_dst_ip = dst_ip;
+	last_proc = p;
 
 	if (!rx_send_pkt_to_runtime(p, buf)) {
 		STAT_INC(RX_UNICAST_FAIL, 1);
