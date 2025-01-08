@@ -212,38 +212,35 @@ fail_free:
 bool rx_burst(void)
 {
 	struct rte_mbuf *bufs[IOKERNEL_RX_BURST_SIZE];
-	uint16_t nb_rx, i;
-	uint16_t nb2_rx, j;
+	struct rte_mbuf *bufs2[IOKERNEL_RX_BURST_SIZE];
+	
+	uint16_t nb_rx, nb2_rx, nb_total_rx;
+	uint16_t i, j;
 
-	/* retrieve packets from NIC queue */
+	/* retrieve packets from both NIC queues in parallel */
 	nb_rx = rte_eth_rx_burst(dp.port, 0, bufs, IOKERNEL_RX_BURST_SIZE);
-	STAT_INC(RX_PULLED, nb_rx);
-	if (nb_rx > 0)
-		log_debug("rx: received %d packets on port %d", nb_rx, dp.port);
+	nb2_rx = rte_eth_rx_burst(dp.port, 1, bufs, IOKERNEL_RX_BURST_SIZE);
 
-	for (i = 0; i < nb_rx; i++) {
-		if (i + RX_PREFETCH_STRIDE < nb_rx) {
-			prefetch(rte_pktmbuf_mtod(bufs[i + RX_PREFETCH_STRIDE],
+	/* report metrics from both queues */
+	STAT_INC(RX_PULLED, nb_rx + nb2_rx);
+
+	/* combine packets into a single mbuf */
+	struct rte_mbuf *all_bufs[IOKERNEL_RX_BURST_SIZE];
+	nb_total_rx = nb_rx + nb2_rx;
+	/* TODO: check later if causes a memory overhead */
+	memcpy(all_bufs, bufs, nb_rx * sizeof(struct rte_mbuf *));
+    memcpy(all_bufs + nb_rx, bufs2, nb2_rx * sizeof(struct rte_mbuf *));
+
+	/* process packets */
+	for (i = 0; i < nb_total_rx; i++) {
+		if (i + RX_PREFETCH_STRIDE < nb_total_rx) {
+			prefetch(rte_pktmbuf_mtod(all_bufs[i + RX_PREFETCH_STRIDE],
 				 char *));
 		}
-		rx_one_pkt(bufs[i]);
+		rx_one_pkt(all_bufs[i]);
 	}
 
-	/* retrieve packets from NIC queue 2 */
-	nb2_rx = rte_eth_rx_burst(dp.port, 1, bufs, IOKERNEL_RX_BURST_SIZE);
-	STAT_INC(RX_PULLED, nb2_rx);
-	if (nb2_rx > 0)
-		log_debug("rx: received %d packets on port %d, queue 1", nb2_rx, dp.port);
-
-	for (j = 0; j < nb2_rx; j++) {
-		if (j + RX_PREFETCH_STRIDE < nb2_rx) {
-			prefetch(rte_pktmbuf_mtod(bufs[j + RX_PREFETCH_STRIDE],
-					char *));
-		}
-		rx_one_pkt(bufs[j]);
-	}
-
-	return nb_rx > 0;
+	return nb_total_rx > 0;
 }
 
 /*
