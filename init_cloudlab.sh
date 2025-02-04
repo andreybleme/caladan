@@ -49,6 +49,10 @@ sudo apt-get install -y python3-pyelftools python-pyelftools
 pip3 install pyelftools
 
 git clone https://github.com/andreybleme/caladan.git
+
+# version with Joshua fix
+git clone https://github.com/shenango/caladan.git
+git checkout 001d4a0bca0581952d772e6368d3d7ee5872e053
 cd caladan
 git pull
 git checkout feature/iokernels
@@ -132,13 +136,13 @@ cargo build --release
 # start iokerneld
 sudo ./iokerneld
 # run server app
-    sudo ./apps/synthetic/target/release/synthetic 128.110.218.219:5000 --config server.config --mode spawner-server
+sudo ./apps/synthetic/target/release/synthetic 128.110.218.205:5000 --config server.config --mode spawner-server
 
 # run client app (always use IP from server node)
-sudo ./apps/synthetic/target/release/synthetic 128.110.218.219:5000 --config client.config --mode runtime-client
+sudo ./apps/synthetic/target/release/synthetic 128.110.218.205:5000 --config client.config --mode runtime-client
 
-# server (node-0): 128.110.218.219/21 (multi iokernels)
-# client (node-1): 128.110.218.118/21
+# server (node-0): 128.110.218.205/21 (multi iokernels)
+# client (node-1): 128.110.218.226/21
 
 # iok A
 # sched: dataplane on 10, control on 0
@@ -147,3 +151,24 @@ sudo ./apps/synthetic/target/release/synthetic 128.110.218.219:5000 --config cli
 # iok B
 # sched: dataplane on 9, control on 19
 # sched: iokernel b using 10 CPU
+
+## ==========================================  NOTES ==========================================
+
+# # server.config
+# an example runtime config file
+host_addr 128.110.218.205
+host_netmask 255.255.248.0
+host_gateway 128.110.218.1
+runtime_kthreads 4
+runtime_guaranteed_kthreads 4
+runtime_priority lc
+
+# # client.config
+# an example runtime config file
+host_addr 128.110.218.226
+host_netmask 255.255.248.0
+host_gateway 128.110.218.1
+runtime_kthreads 6
+runtime_spinning_kthreads 6
+runtime_guaranteed_kthreads 6
+runtime_priority lc
