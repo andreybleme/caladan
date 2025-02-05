@@ -207,42 +207,47 @@ fail_free:
 }
 
 /*
- * Process a batch of incoming packets.
+ * Process a batch of incoming packets from two queues in an interleaved manner.
  */
 bool rx_burst(void)
 {
-	struct rte_mbuf *bufs[IOKERNEL_RX_BURST_SIZE];
-	uint16_t nb_rx, i;
-	uint16_t nb2_rx, j;
+    struct rte_mbuf *bufs0[IOKERNEL_RX_BURST_SIZE];
+    struct rte_mbuf *bufs1[IOKERNEL_RX_BURST_SIZE];
+    uint16_t nb_rx0, nb_rx1;
+    uint16_t i = 0, j = 0;
 
-	/* retrieve packets from NIC queue */
-	nb_rx = rte_eth_rx_burst(dp.port, 0, bufs, IOKERNEL_RX_BURST_SIZE);
-	STAT_INC(RX_PULLED, nb_rx);
-	if (nb_rx > 0)
-		log_debug("rx: received %d packets on port %d", nb_rx, dp.port);
+    /* Retrieve packets from NIC queue 0 */
+    nb_rx0 = rte_eth_rx_burst(dp.port, 0, bufs0, IOKERNEL_RX_BURST_SIZE);
+    /* Retrieve packets from NIC queue 1 */
+    nb_rx1 = rte_eth_rx_burst(dp.port, 1, bufs1, IOKERNEL_RX_BURST_SIZE);
 
-	for (i = 0; i < nb_rx; i++) {
-		if (i + RX_PREFETCH_STRIDE < nb_rx) {
-			prefetch(rte_pktmbuf_mtod(bufs[i + RX_PREFETCH_STRIDE],
-				 char *));
-		}
-		rx_one_pkt(bufs[i]);
-	}
+    /* Update statistics for both queues */
+    STAT_INC(RX_PULLED, nb_rx0 + nb_rx1);
 
-	/* retrieve packets from NIC queue 2 */
-	nb2_rx = rte_eth_rx_burst(dp.port, 1, bufs, IOKERNEL_RX_BURST_SIZE);
-	STAT_INC(RX_PULLED, nb2_rx);
-	if (nb2_rx > 0)
-		log_debug("rx: received %d packets on port %d, queue 1", nb2_rx, dp.port);
-	for (j = 0; j < nb2_rx; j++) {
-		if (j + RX_PREFETCH_STRIDE < nb2_rx) {
-			prefetch(rte_pktmbuf_mtod(bufs[j + RX_PREFETCH_STRIDE],
-					char *));
-		}
-		rx_one_pkt(bufs[j]);
-	}
+    if (nb_rx0 > 0)
+        log_debug("rx: received %d packets on port %d (queue 0)", nb_rx0, dp.port);
+    if (nb_rx1 > 0)
+        log_debug("rx: received %d packets on port %d (queue 1)", nb_rx1, dp.port);
 
-	return nb_rx > 0;
+    /* Process packets in an interleaved fashion */
+    while (i < nb_rx0 || j < nb_rx1) {
+        if (i < nb_rx0) {
+            /* Prefetch for queue 0 */
+            if (i + RX_PREFETCH_STRIDE < nb_rx0)
+                prefetch(rte_pktmbuf_mtod(bufs0[i + RX_PREFETCH_STRIDE], char *));
+            rx_one_pkt(bufs0[i]);
+            i++;
+        }
+        if (j < nb_rx1) {
+            /* Prefetch for queue 1 */
+            if (j + RX_PREFETCH_STRIDE < nb_rx1)
+                prefetch(rte_pktmbuf_mtod(bufs1[j + RX_PREFETCH_STRIDE], char *));
+            rx_one_pkt(bufs1[j]);
+            j++;
+        }
+    }
+
+    return (nb_rx0 > 0) || (nb_rx1 > 0);
 }
 
 /*
