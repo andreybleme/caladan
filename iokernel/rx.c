@@ -119,7 +119,6 @@ static void rx_one_pkt(struct rte_mbuf *buf)
 	struct rte_ether_hdr *ptr_mac_hdr;
 	struct rte_ether_addr *ptr_dst_addr;
 	struct rte_ipv4_hdr *iphdr;
-	struct rx_net_hdr *net_hdr;
 	uint16_t ether_type;
 	uint32_t dst_ip;
 
@@ -148,9 +147,8 @@ static void rx_one_pkt(struct rte_mbuf *buf)
 		    arphdr->arp_opcode == rte_cpu_to_be_16(RTE_ARP_OP_REPLY)) {
 			bool success;
 			int n_sent = 0;
-			net_hdr = rx_prepend_rx_preamble(buf);
 			for (int i = 0; i < dp.nr_clients; i++) {
-				success = rx_send_pkt_to_runtime(dp.clients[i], net_hdr);
+				success = rx_send_pkt_to_runtime(dp.clients[i], buf);
 				if (success) {
 					n_sent++;
 				} else {
@@ -170,21 +168,29 @@ static void rx_one_pkt(struct rte_mbuf *buf)
 		goto fail_free;
 	}
 
-	/* lookup runtime by IP in hash table */
-	ret = rte_hash_lookup_data(dp.ip_to_proc, &dst_ip, (void **)&p);
-	if (unlikely(ret < 0)) {
+	
+	/* use cached dst_ip and last_pro to avoid hash table looups when dst_ip does not change often */
+	if (dst_ip == last_dst_ip && last_proc != NULL) {
+		p = last_proc;
+	} else {
+		/* lookup runtime by IP in hash table */
+		ret = rte_hash_lookup_data(dp.ip_to_proc, &dst_ip, (void **)&p);
+		if (unlikely(ret < 0)) {
+			if (cfg.azure_arp_mode && ether_type == ETHTYPE_ARP &&
+				arphdr->arp_opcode == rte_cpu_to_be_16(RTE_ARP_OP_REQUEST) &&
+				azure_arp_response(buf))
+				return;
 
-		if (cfg.azure_arp_mode && ether_type == ETHTYPE_ARP &&
-		    arphdr->arp_opcode == rte_cpu_to_be_16(RTE_ARP_OP_REQUEST) &&
-		    azure_arp_response(buf))
-			return;
-
-		STAT_INC(RX_UNREGISTERED_MAC, 1);
-		goto fail_free;
+			STAT_INC(RX_UNREGISTERED_MAC, 1);
+			goto fail_free;
+		}
 	}
+	
+	/* cache ip and proc for future lookup */
+	last_dst_ip = dst_ip;
+	last_proc = p;
 
-	net_hdr = rx_prepend_rx_preamble(buf);
-	if (!rx_send_pkt_to_runtime(p, net_hdr)) {
+	if (!rx_send_pkt_to_runtime(p, buf)) {
 		STAT_INC(RX_UNICAST_FAIL, 1);
 		goto fail_free;
 	}
