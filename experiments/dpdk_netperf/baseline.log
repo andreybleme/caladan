@@ -1,0 +1,8 @@
+# sudo ./examples/dpdk-dpdk_netperf -l2 --socket-mem=128 -- UDP_CLIENT 128.110.218.44 128.110.218.59 50000 8001 10 8 50
+
+Core 2 running in client mode. [Ctrl+C to quit]
+Using ARP to resolve server MAC
+Got server MAC addr: 9C:DC:71:5E:2F:A1
+ran for 10.000029 seconds, sent 200026 packets
+client reqs/s: 20002.541016
+mean latency (us): 5.148459
