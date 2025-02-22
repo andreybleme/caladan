@@ -27,7 +27,7 @@
 
 static const struct rte_eth_conf port_conf_default = {
 	.rxmode = {
-		.max_rx_pkt_len = RTE_ETHER_MAX_LEN,
+		.max_lro_pkt_size = RTE_ETHER_MAX_LEN,
 		.offloads = DEV_RX_OFFLOAD_IPV4_CKSUM,
 	},
 	.txmode = {
@@ -57,7 +57,7 @@ enum {
 	(((uint32_t) a << 24) | ((uint32_t) b << 16) |	\
 	 ((uint32_t) c << 8) | (uint32_t) d)
 
-static unsigned int dpdk_port = 0;
+static unsigned int dpdk_port = 1; // TODO change this and try again
 static uint8_t mode;
 struct rte_mempool *rx_mbuf_pool;
 struct rte_mempool *tx_mbuf_pool;
@@ -69,7 +69,7 @@ static size_t payload_len;
 static unsigned int interval_us;
 static unsigned int client_port;
 static unsigned int server_port;
-static unsigned int num_queues = 1;
+static unsigned int num_queues = 2;
 struct rte_ether_addr zero_mac = {
 		.addr_bytes = {0x0, 0x0, 0x0, 0x0, 0x0, 0x0}
 };
@@ -271,8 +271,8 @@ static void send_arp(uint16_t op, struct rte_ether_addr dst_eth, uint32_t dst_ip
 	buf_ptr = rte_pktmbuf_append(buf, RTE_ETHER_HDR_LEN);
 	eth_hdr = (struct rte_ether_hdr *) buf_ptr;
 
-	rte_ether_addr_copy(&my_eth, &eth_hdr->s_addr);
-	rte_ether_addr_copy(&dst_eth, &eth_hdr->d_addr);
+	rte_ether_addr_copy(&my_eth, &eth_hdr->src_addr);
+	rte_ether_addr_copy(&dst_eth, &eth_hdr->dst_addr);
 	eth_hdr->ether_type = rte_cpu_to_be_16(RTE_ETHER_TYPE_ARP);
 
 	/* arp header */
@@ -305,8 +305,8 @@ static bool check_eth_hdr(struct rte_mbuf *buf)
 	struct rte_arp_hdr *a_hdr;
 
 	ptr_mac_hdr = rte_pktmbuf_mtod(buf, struct rte_ether_hdr *);
-	if (!rte_is_same_ether_addr(&ptr_mac_hdr->d_addr, &my_eth) &&
-			!rte_is_broadcast_ether_addr(&ptr_mac_hdr->d_addr)) {
+	if (!rte_is_same_ether_addr(&ptr_mac_hdr->dst_addr, &my_eth) &&
+			!rte_is_broadcast_ether_addr(&ptr_mac_hdr->dst_addr)) {
 		/* packet not to our ethernet addr */
 		return false;
 	}
@@ -409,7 +409,7 @@ static void do_client(uint8_t port)
 			buf = bufs[i];
 
 			ptr_mac_hdr = rte_pktmbuf_mtod(buf, struct rte_ether_hdr *);
-			if (!rte_is_same_ether_addr(&ptr_mac_hdr->d_addr, &my_eth)) {
+			if (!rte_is_same_ether_addr(&ptr_mac_hdr->dst_addr, &my_eth)) {
 					/* packet not to our ethernet addr */
 					continue;
 			}
@@ -450,8 +450,8 @@ got_mac:
 		buf_ptr = rte_pktmbuf_append(buf, RTE_ETHER_HDR_LEN);
 		eth_hdr = (struct rte_ether_hdr *) buf_ptr;
 
-		rte_ether_addr_copy(&my_eth, &eth_hdr->s_addr);
-		rte_ether_addr_copy(p_server_eth, &eth_hdr->d_addr);
+		rte_ether_addr_copy(&my_eth, &eth_hdr->src_addr);
+		rte_ether_addr_copy(p_server_eth, &eth_hdr->dst_addr);
 		eth_hdr->ether_type = rte_cpu_to_be_16(RTE_ETHER_TYPE_IPV4);
 
 		/* IPv4 header */
@@ -585,17 +585,26 @@ got_mac:
 }
 
 /*
- * Run a netperf server
+ * Run a netperf server processing two queues per thread
  */
 static int
 do_server(void *arg)
 {
 	uint8_t port = dpdk_port;
-	uint8_t queue = (uint64_t) arg;
+	uint8_t first_queue = (uint64_t)arg;
+	uint8_t second_queue = first_queue + 1;
+
+	if (second_queue >= num_queues)
+	{
+		printf("Error: second queue index %d is out of bounds (num_queues=%d)\n",
+			   second_queue, num_queues);
+		return -1;
+	}
+
 	struct rte_mbuf *rx_bufs[BURST_SIZE];
 	struct rte_mbuf *tx_bufs[BURST_SIZE];
 	struct rte_mbuf *buf;
-	uint16_t nb_rx, n_to_tx, nb_tx, i, j, q;
+	uint16_t nb_rx, n_to_tx, nb_tx, i, j;
 	struct rte_ether_hdr *ptr_mac_hdr;
 	struct rte_ether_addr src_addr;
 	struct rte_ipv4_hdr *ptr_ipv4_hdr;
@@ -604,90 +613,96 @@ do_server(void *arg)
 	struct nbench_req *control_req;
 	struct nbench_resp *control_resp;
 
-	printf("on server core with lcore_id: %d, queue: %d, num_queues: %d\n", rte_lcore_id(), queue,
-			num_queues);
+	printf("On server core %d processing queues %d and %d\n",
+		   rte_lcore_id(), first_queue, second_queue);
 
 	/*
-	 * Check that the port is on the same NUMA node as the polling thread
-	 * for best performance.
+	 * Check NUMA node for best performance.
 	 */
 	if (rte_eth_dev_socket_id(port) > 0 &&
-        rte_eth_dev_socket_id(port) != (int)rte_socket_id())
-        printf("WARNING, port %u (socket %d) is on remote NUMA node to polling thread (socket %d).\n\t"
-               "Performance will not be optimal.\n", port, rte_eth_dev_socket_id(port), rte_socket_id());
+		rte_eth_dev_socket_id(port) != (int)rte_socket_id())
+	{
+		printf("WARNING, port %u (socket %d) is on remote NUMA node to polling thread (socket %d).\n\t"
+			   "Performance will not be optimal.\n",
+			   port, rte_eth_dev_socket_id(port), rte_socket_id());
+	}
 
 	printf("\nCore %u running in server mode. [Ctrl+C to quit]\n",
-			rte_lcore_id());
+		   rte_lcore_id());
 
-	/* Run until the application is quit or killed. */
-	for (;;) {
-		for (q = 0; q < num_queues; q++) {
+	/* Main loop */
+	for (;;)
+	{
+		/* Process each of the two queues in turn */
+		for (int q_idx = 0; q_idx < 2; q_idx++)
+		{
+			uint8_t current_q = (q_idx == 0) ? first_queue : second_queue;
 
-			/* receive packets */
-			nb_rx = rte_eth_rx_burst(port, q, rx_bufs, BURST_SIZE);
-
+			/* Receive packets from current_q */
+			nb_rx = rte_eth_rx_burst(port, current_q, rx_bufs, BURST_SIZE);
 			if (nb_rx == 0)
 				continue;
 
 			n_to_tx = 0;
-			for (i = 0; i < nb_rx; i++) {
+			for (i = 0; i < nb_rx; i++)
+			{
 				buf = rx_bufs[i];
 
 				if (!check_eth_hdr(buf))
 					goto free_buf;
 
-				/* this packet is IPv4, check IP header */
+				/* Check IPv4 header */
 				if (!check_ip_hdr(buf))
 					goto free_buf;
 
-				/* swap src and dst ether addresses */
+				/* Swap MAC addresses */
 				ptr_mac_hdr = rte_pktmbuf_mtod(buf, struct rte_ether_hdr *);
-				rte_ether_addr_copy(&ptr_mac_hdr->s_addr, &src_addr);
-				rte_ether_addr_copy(&ptr_mac_hdr->d_addr, &ptr_mac_hdr->s_addr);
-				rte_ether_addr_copy(&src_addr, &ptr_mac_hdr->d_addr);
+				rte_ether_addr_copy(&ptr_mac_hdr->src_addr, &src_addr);
+				rte_ether_addr_copy(&ptr_mac_hdr->dst_addr, &ptr_mac_hdr->src_addr);
+				rte_ether_addr_copy(&src_addr, &ptr_mac_hdr->dst_addr);
 
-				/* swap src and dst IP addresses */
+				/* Swap IPv4 addresses */
 				ptr_ipv4_hdr = rte_pktmbuf_mtod_offset(buf, struct rte_ipv4_hdr *,
-								RTE_ETHER_HDR_LEN);
+													   RTE_ETHER_HDR_LEN);
 				src_ip_addr = ptr_ipv4_hdr->src_addr;
 				ptr_ipv4_hdr->src_addr = ptr_ipv4_hdr->dst_addr;
 				ptr_ipv4_hdr->dst_addr = src_ip_addr;
 
-				/* swap UDP ports */
+				/* Swap UDP ports */
 				struct rte_udp_hdr *rte_udp_hdr;
 				rte_udp_hdr = rte_pktmbuf_mtod_offset(buf, struct rte_udp_hdr *,
-								RTE_ETHER_HDR_LEN + sizeof(struct rte_ipv4_hdr));
+													  RTE_ETHER_HDR_LEN + sizeof(struct rte_ipv4_hdr));
 				tmp_port = rte_udp_hdr->src_port;
 				rte_udp_hdr->src_port = rte_udp_hdr->dst_port;
 				rte_udp_hdr->dst_port = tmp_port;
 
-				/* check if this is a control message and we need to reply with
-				 * ports */
+				/* Check for control message */
 				control_req = rte_pktmbuf_mtod_offset(buf, struct nbench_req *,
-								RTE_ETHER_HDR_LEN + sizeof(struct rte_ipv4_hdr) +
-								sizeof(struct rte_udp_hdr));
-				if (control_req->magic == kMagic) {
+													  RTE_ETHER_HDR_LEN + sizeof(struct rte_ipv4_hdr) +
+														  sizeof(struct rte_udp_hdr));
+				if (control_req->magic == kMagic)
+				{
 					rte_pktmbuf_append(buf, sizeof(struct nbench_resp) +
-							sizeof(uint16_t) *
-							control_req->nports -
-							sizeof(struct nbench_req));
-					control_resp = (struct nbench_resp *) control_req;
+												sizeof(uint16_t) * control_req->nports -
+												sizeof(struct nbench_req));
+					control_resp = (struct nbench_resp *)control_req;
 
-					/* add ports to response */
-					for (j = 0; j < control_req->nports; j++) {
-						/* simple port allocation */
+					/* Add ports to response */
+					for (j = 0; j < control_req->nports; j++)
+					{
 						control_resp->ports[j] = rte_cpu_to_be_16(next_port++);
 					}
 
-					/* adjust lengths in UDP and IPv4 headers */
-					payload_len = sizeof(struct nbench_resp) +
-						sizeof(uint16_t) * control_req->nports;
+					/* Adjust lengths in UDP and IPv4 headers */
+					uint16_t payload_len = sizeof(struct nbench_resp) +
+										   sizeof(uint16_t) * control_req->nports;
 					rte_udp_hdr->dgram_len = rte_cpu_to_be_16(sizeof(struct rte_udp_hdr) +
-									payload_len);
+															  payload_len);
 					ptr_ipv4_hdr->total_length = rte_cpu_to_be_16(sizeof(struct rte_ipv4_hdr) +
-										sizeof(struct rte_udp_hdr) + payload_len);
+																  sizeof(struct rte_udp_hdr) +
+																  payload_len);
 
-					/* enable computation of IPv4 checksum in hardware */
+					/* Enable IPv4 checksum offloading */
 					ptr_ipv4_hdr->hdr_checksum = 0;
 					buf->l2_len = RTE_ETHER_HDR_LEN;
 					buf->l3_len = sizeof(struct rte_ipv4_hdr);
@@ -698,16 +713,14 @@ do_server(void *arg)
 				continue;
 
 			free_buf:
-				/* packet wasn't sent, free it */
 				rte_pktmbuf_free(buf);
 			}
 
-			/* transmit packets */
-			nb_tx = rte_eth_tx_burst(port, q, tx_bufs, n_to_tx);
-
+			/* Transmit packets on the current queue */
+			nb_tx = rte_eth_tx_burst(port, current_q, tx_bufs, n_to_tx);
 			if (nb_tx != n_to_tx)
-				printf("error: could not transmit all packets: %d %d\n",
-					n_to_tx, nb_tx);
+				printf("error: could not transmit all packets on queue %d: %d sent, %d attempted\n",
+					   current_q, nb_tx, n_to_tx);
 		}
 	}
 
@@ -856,7 +869,7 @@ main(int argc, char *argv[])
 		do_client(dpdk_port);
 	else {
 		i = 0;
-		RTE_LCORE_FOREACH_SLAVE(lcore_id)
+		RTE_LCORE_FOREACH_WORKER(lcore_id)
 			rte_eal_remote_launch(do_server, (void *) i++, lcore_id);
 		do_server((void *) i);
 	}
