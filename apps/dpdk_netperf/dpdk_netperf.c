@@ -57,7 +57,7 @@ enum {
 	(((uint32_t) a << 24) | ((uint32_t) b << 16) |	\
 	 ((uint32_t) c << 8) | (uint32_t) d)
 
-static unsigned int dpdk_port = 1; // TODO change this and try again
+static unsigned int dpdk_port = 1;
 static uint8_t mode;
 struct rte_mempool *rx_mbuf_pool;
 struct rte_mempool *tx_mbuf_pool;
@@ -856,7 +856,7 @@ main(int argc, char *argv[])
 		do_client(dpdk_port);
 	else {
 		i = 0;
-		RTE_LCORE_FOREACH_WORKER(lcore_id) // fail when compiling with meson ../examples/dpdk_netperf/dpdk_netperf.c:859:50: error: expected ‘;’ before ‘rte_eal_remote_launch’
+		RTE_LCORE_FOREACH_WORKER(lcore_id)
 			rte_eal_remote_launch(do_server, (void *) i++, lcore_id);
 		do_server((void *) i);
 	}
