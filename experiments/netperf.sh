@@ -24,6 +24,6 @@ ninja
 # run the built version
 cd ~/caladan/dpdk/build
 # server
-sudo ./examples/dpdk-dpdk_netperf -l2 --socket-mem=128 -- UDP_SERVER 128.110.218.59
+sudo ./examples/dpdk-dpdk_netperf -l2 --socket-mem=128 -- UDP_SERVER 128.110.218.132
 # client
-sudo ./examples/dpdk-dpdk_netperf -l2 --socket-mem=128 -- UDP_CLIENT 128.110.218.44 128.110.218.59 50000 8001 10 8 50
+sudo ./examples/dpdk-dpdk_netperf -l2 --socket-mem=128 -- UDP_CLIENT 128.110.218.130 128.110.218.132 50000 8001 10 8 50
