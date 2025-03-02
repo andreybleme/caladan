@@ -37,6 +37,8 @@ static const struct rte_eth_conf port_conf_default = {
 
 uint32_t kMagic = 0x6e626368; // 'nbch'
 
+uint64_t start_cycles, end_cycles, elapsed_cycles;
+
 struct nbench_req {
   uint32_t magic;
   int nports;
@@ -619,6 +621,9 @@ do_server(void *arg)
 	printf("\nCore %u running in server mode. [Ctrl+C to quit]\n",
 			rte_lcore_id());
 
+	// Capture the cycle count before calling the function.
+	start_cycles = rte_get_timer_cycles();
+
 	/* Run until the application is quit or killed. */
 	for (;;) {
 		for (q = 0; q < num_queues; q++) {
@@ -692,6 +697,26 @@ do_server(void *arg)
 					buf->l2_len = RTE_ETHER_HDR_LEN;
 					buf->l3_len = sizeof(struct rte_ipv4_hdr);
 					buf->ol_flags = PKT_TX_IP_CKSUM | PKT_TX_IPV4;
+				}
+
+				// Capture the cycle count after the function call.
+				end_cycles = rte_get_timer_cycles();
+				// Calculate the number of CPU cycles taken.
+				elapsed_cycles = end_cycles - start_cycles;
+
+				// Convert elapsed cycles to processing time in seconds.
+				double processing_time = (double)elapsed_cycles / rte_get_timer_hz();
+				// Assuming a 1-second interval, compute the CPU usage percentage.
+				// double cpu_usage_percentage = processing_time * 100.0;
+				double cpu_usage_percentage = processing_time * 100.0;
+
+				// Write the elapsed cycles into a log
+				FILE *log_file = fopen("elapsed_cycles.log", "a");
+				if (log_file != NULL) {
+					fprintf(log_file, "time %f seconds: do_server took %f CPU cycles | used %f percent of CPU \n", (float) (end_cycles - start_cycles) / rte_get_timer_hz(), (float) elapsed_cycles, cpu_usage_percentage);
+					fclose(log_file);
+				} else {
+					printf("\n=== could not open elapsed_cycles.log file");
 				}
 
 				tx_bufs[n_to_tx++] = buf;
