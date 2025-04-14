@@ -17,6 +17,10 @@ sudo ethtool --show-rxfh eno49np0
 # ethtool commands (https://docs.nvidia.com/networking/display/mlnxofedv461000/ethtool#src-12013419_Ethtool-EthtoolSupportedOptionsTable)
 sudo ethtool -i eno49np0
 
+# When using MLX5 (d6515 Cloudlab):
+sudo ethtool -X enp65s0f0np0 hfunc xor
+sudo ethtool --show-rxfh enp65s0f0np0
+sudo ethtool -i enp65s0f0np0
 
 # install ninja
 sudo apt install -y ninja-build
@@ -136,13 +140,20 @@ cargo build --release
 # start iokerneld
 sudo ./iokerneld
 # run server app
-sudo ./apps/synthetic/target/release/synthetic 128.110.218.145:5000 --config server.config --mode spawner-server
+sudo ./apps/synthetic/target/release/synthetic 128.110.218.185:5000 --config server.config --mode spawner-server
 
 # run client app (always use IP from server node)
-sudo ./apps/synthetic/target/release/synthetic 128.110.218.145:5000 --config client.config --mode runtime-client
+sudo ./apps/synthetic/target/release/synthetic 128.110.218.185:5000 --config client.config --mode runtime-client
 
-# server (node-0): 128.110.218.145/21 (multi iokernels)
-# client (node-1): 128.110.218.125/21
+# other useful params
+sudo ./apps/synthetic/target/release/synthetic 128.110.218.185:5000 --config client.config --mode runtime-client --output=buckets
+
+sudo ./apps/synthetic/target/release/synthetic 128.110.218.185:5000 --config client.config --mode runtime-client --mpps=0.04
+sudo ./apps/synthetic/target/release/synthetic 128.110.218.185:5000 --config client.config --mode runtime-client --start_mpps=0.005 --mpps=0.05 --samples=20 --rampup=4 --intersample_sleep=2
+sudo ./apps/synthetic/target/release/synthetic 128.110.218.185:5000 --config client.config --mode runtime-client --start_mpps=0.01 --mpps=0.04 --samples=40 --rampup=5
+
+# server (node-0): 128.110.218.185/21 (multi iokernels)
+# client (node-1): 128.110.218.164/21
 
 # iok A
 # sched: dataplane on 10, control on 0
@@ -156,7 +167,7 @@ sudo ./apps/synthetic/target/release/synthetic 128.110.218.145:5000 --config cli
 
 # # server.config
 # an example runtime config file
-host_addr 128.110.218.145
+host_addr 128.110.218.185
 host_netmask 255.255.248.0
 host_gateway 128.110.218.1
 runtime_kthreads 4
@@ -165,7 +176,7 @@ runtime_priority lc
 
 # # client.config
 # an example runtime config file
-host_addr 128.110.218.125
+host_addr 128.110.218.164
 host_netmask 255.255.248.0
 host_gateway 128.110.218.1
 runtime_kthreads 6
