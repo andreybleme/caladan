@@ -59,3 +59,7 @@ plt.grid(True)
 
 # Save the plot to a file
 plt.savefig("latency_percentiles.png")
+
+# caladan: 25251508 hashtable reads, 3931051452 cycles, 1.61 seconds
+# tangle:  1 hashtable read = 3231 cycles, 1.35 µs
+# hz 2400000000
