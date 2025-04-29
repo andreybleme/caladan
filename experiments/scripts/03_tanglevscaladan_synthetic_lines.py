@@ -53,10 +53,10 @@ plt.figure(figsize=(10, 6))
 # plt.plot(df_tangle['Target'], df_tangle['99.99th'], color='blue', marker='o', linestyle='-', label='Tangle 99.99th Percentile')
 # ====== p99.9th percentile here ======
 plt.plot(df['Target'], df['99.9th'], color='orange', marker='^', linestyle='-', label='Caladan 99.9th Percentile')
-plt.plot(df_tangle['Target'], df_tangle['99.9th'], color='green', marker='o', linestyle='-', label='Tangle 99.99th Percentile')
+plt.plot(df_tangle['Target'], df_tangle['99.9th'], color='green', marker='o', linestyle='-', label='Tangle 99.9th Percentile')
 
 # Labeling the plot
-plt.xlabel("Number of Packets")
+plt.xlabel("Number of Packets (millions)")
 plt.ylabel("Latency (μs)")
 plt.title("")
 plt.legend()
@@ -66,7 +66,7 @@ plt.grid(True)
 # plt.ticklabel_format(style="sci", axis="x")
 
 # Save the plot to a file
-plt.savefig("caladanvstangle_99d9.png")
+plt.savefig("latency_caladanvstangle_99d9.pdf")
 
 # caladan: 25251508 hashtable reads, 3931051452 cycles, 1.61 seconds
 # tangle:  1 hashtable read = 3231 cycles, 1.35 µs

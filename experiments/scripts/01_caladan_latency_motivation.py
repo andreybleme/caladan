@@ -48,9 +48,9 @@ plt.plot(df['Target'], df['99.9th'], color='orange', marker='s', linestyle='-', 
 plt.plot(df['Target'], df['99.99th'], color='red', marker='^', linestyle='-', label='99.99th Percentile')
 
 # Labeling the plot
-plt.xlabel("Number of Packets")
+plt.xlabel("Number of Packets (millions)")
 plt.ylabel("Latency (μs)")
-plt.title("Latency in Microseconds vs. Number of Packets Processed")
+plt.title("")
 plt.legend()
 plt.grid(True)
 
@@ -58,7 +58,7 @@ plt.grid(True)
 # plt.ticklabel_format(style="sci", axis="x")
 
 # Save the plot to a file
-plt.savefig("latency_percentiles.png")
+plt.savefig("motivation_caladan_latency_synthetic.pdf")
 
 # caladan: 25251508 hashtable reads, 3931051452 cycles, 1.61 seconds
 # tangle:  1 hashtable read = 3231 cycles, 1.35 µs
