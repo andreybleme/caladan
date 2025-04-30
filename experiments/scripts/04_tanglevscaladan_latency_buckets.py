@@ -49,4 +49,4 @@ plt.title(f'Coarse‑binned (​{BIN_SIZE} µs) latency histogram')
 plt.tight_layout()
 
 # Save the plot to a file
-plt.savefig("tangle_buckets_bimodal.png")
+plt.savefig("tangle_buckets_bimodal.pdf")

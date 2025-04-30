@@ -23,7 +23,7 @@ zero, 1907182, 1907182, 0, 890229, 13.0, 17.0, 40.0, 233.0, 259.0, 1744648317, 4
 """
 
 # --------- parameters ----------
-average_pkt_size_bytes = 52 # default payload size is 24 bytes + UDP header (8 bytes) + IP header (20 bytes)
+average_pkt_size_bytes = 52  # default payload size is 24 bytes + UDP header (8 bytes) + IP header (20 bytes)
 
 # --------- load & preprocess ----------
 df = pd.read_csv(StringIO(csv_data.strip()), skipinitialspace=True)
@@ -33,7 +33,21 @@ df['delta_actual'] = df['Actual'].diff()
 df['delta_time_s'] = df['time'].diff().dt.total_seconds()
 df['throughput_pps'] = df['delta_actual'] / df['delta_time_s']
 
-plot_df = df.dropna(subset=['throughput_pps']).copy()
+# ── ADDED: compute "never sent" packets per second as before
+df['delta_never_sent'] = df['Never Sent'].diff()
+df['never_sent_per_s'] = df['delta_never_sent'] / df['delta_time_s']
+
+plot_df = df.dropna(subset=['throughput_pps', 'never_sent_per_s']).copy()
+
+# ── ADDED: compute normalization factor so the red line spans roughly the same vertical range as the bars
+norm_factor = plot_df['throughput_pps'].max() / plot_df['never_sent_per_s'].max()
+
+# ── ADDED: apply normalization to the "never sent" rate
+plot_df['never_sent_norm'] = plot_df['never_sent_per_s'] * norm_factor
+
+# ── ADDED: clamp negative normalized values to zero to avoid plotting below zero
+plot_df['never_sent_norm'] = plot_df['never_sent_norm'].clip(lower=0)
+
 t0 = plot_df['time'].iloc[0]
 plot_df['minutes'] = (
     (plot_df['time'] - t0).dt.total_seconds() / 60
@@ -44,30 +58,34 @@ plot_df['throughput_Mbps'] = plot_df['throughput_pps'] * average_pkt_size_bytes 
 plot_df['throughput_Mpps'] = plot_df['throughput_pps'] / 1e6   # millions of pps (optional)
 
 # --- plotting with gaps between bars ---
-gap_factor = 0.6               # 0 = hair‑thin bars, 1 = bars touch
+gap_factor = 0.6               # 0 = hair-thin bars, 1 = bars touch
 min_step   = plot_df['minutes'].diff().min()
 bar_width  = gap_factor * min_step        # 60 % of the smallest interval
 
-# --------- plotting (Mb/s) ----------
+# --------- plotting (packets per second) ----------
 plt.figure(figsize=(8, 4))
-# plt.bar(plot_df['minutes'],
-#         plot_df['throughput_Mpps'],
-#         width=bar_width,    
-#         align='center')
-# graph 05 - actual packets per seconds
 plt.bar(plot_df['minutes'],
         plot_df['throughput_pps'],
         edgecolor='black',
-        color='#FF8C00',
-        width=bar_width,    
+        color='#87BB62',
+        width=bar_width,
         align='center')
 
-# graph 05 - actual packets per seconds
+# ── (unchanged) plot the normalized "never sent" curve, now clamped at zero
+plt.plot(plot_df['minutes'],
+         plot_df['never_sent_norm'],
+         color='#e60000',
+         linestyle='--',
+         linewidth=1,
+         marker='o',
+         label='Packets Never Sent')
+
 plt.xlabel('Time (minutes)')
 plt.ylabel('Packets Per Second (pps)')
 plt.title('')
 plt.xticks(plot_df['minutes'].round(2))
+plt.legend()
 plt.tight_layout()
 
 # Save the plot to a file
-plt.savefig("tangle_throughput_mpps.pdf")
+plt.savefig("tangle_throughput_neversent.pdf")
