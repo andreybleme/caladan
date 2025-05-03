@@ -48,8 +48,8 @@ plt.plot(df['Target'], df['99.9th'], color='orange', marker='s', linestyle='-', 
 plt.plot(df['Target'], df['99.99th'], color='red', marker='^', linestyle='-', label='99.99th Percentile')
 
 # Labeling the plot
-plt.xlabel("Number of Packets (millions)")
-plt.ylabel("Latency (μs)")
+plt.xlabel("Number of Packets (millions)", fontsize=14)
+plt.ylabel("Latency (μs)", fontsize=14)
 plt.title("")
 plt.legend()
 plt.grid(True)

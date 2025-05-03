@@ -8,7 +8,7 @@ log_file_tangle = '../tangle/start 0.005 - mpps 4.0 - bimodal 0.90:83:918/synthe
 
 # Parse the "Latencies:" lines and build a latency→count mapping
 buckets = {}
-with open(log_file_tangle, 'r') as f:
+with open(log_file, 'r') as f:
     for line in f:
         if line.startswith('Latencies:'):
             # strip off the "Latencies: " prefix, split into "latency:count" tokens
@@ -26,13 +26,13 @@ df = df.reset_index().sort_values('latency_us')
 
 
 # Plot histogram (bar chart)
-# plt.figure(figsize=(10, 6))
-# plt.bar(df['latency_us'], df['count'], width=1.0, edgecolor='black')
-# plt.xlabel('Latency (µs)')
-# plt.ylabel('Packet count')
-# plt.title('Packet‑Latency Distribution Histogram')
-# plt.xticks(df['latency_us'][::10], rotation=45)  # show every 10th tick for readability
-# plt.tight_layout()
+plt.figure(figsize=(10, 6))
+plt.bar(df['latency_us'], df['count'], width=1.0, edgecolor='black')
+plt.xlabel('Latency (µs)')
+plt.ylabel('Packet count')
+plt.title('Packet‑Latency Distribution Histogram')
+plt.xticks(df['latency_us'][::10], rotation=45)  # show every 10th tick for readability
+plt.tight_layout()
 
 # Coarse‑binning (bucket aggregation)
 BIN_SIZE = 5  # µs per new bucket
