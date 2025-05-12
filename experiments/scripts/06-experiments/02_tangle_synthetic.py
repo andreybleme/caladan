@@ -2,8 +2,14 @@ import pandas as pd
 import matplotlib.pyplot as plt
 from io import StringIO
 
-# Log data as a multiline string
+plt.rcParams['font.size'] = 14
+plt.rcParams['axes.titlesize'] = 16
+plt.rcParams['axes.labelsize'] = 16
+plt.rcParams['legend.fontsize'] = 14
+plt.rcParams['xtick.labelsize'] = 14
+plt.rcParams['ytick.labelsize'] = 14
 
+# Log data as a multiline string
 log_data_tangle = """
 Distribution, Target, Actual, Dropped, Never Sent, Median, 90th, 99th, 99.9th, 99.99th, Start, StartTsc
 zero, 603955, 603955, 0, 11292, 12.0, 15.0, 21.0, 142.0, 210.0, 1744648076, 4129725750941037
@@ -39,9 +45,9 @@ plt.figure(figsize=(10, 6))
 
 # Plot the percentiles versus the number of packets processed (Target)
 # ====== p99.99th percentile here ======
-plt.plot(df_tangle['Target'], df_tangle['Median'], color='black', marker='x', linestyle='-', label='Median')
+plt.plot(df_tangle['Target'], df_tangle['Median'], color='black', marker='*', linestyle='-', label='Median')
 plt.plot(df_tangle['Target'], df_tangle['90th'], color='#baba3f', marker='x', linestyle='-', label='90th Percentile')
-plt.plot(df_tangle['Target'], df_tangle['99th'], color='#d16a41', marker='x', linestyle='-', label='99th Percentile')
+plt.plot(df_tangle['Target'], df_tangle['99th'], color='#d16a41', marker='D', linestyle='-', label='99th Percentile')
 plt.plot(df_tangle['Target'], df_tangle['99.9th'], color='green', marker='^', linestyle='-', label='99.9th Percentile')
 plt.plot(df_tangle['Target'], df_tangle['99.99th'], color='blue', marker='o', linestyle='-', label='99.99th Percentile')
 # ====== p99.9th percentile here ======

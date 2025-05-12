@@ -2,6 +2,13 @@ import pandas as pd
 import matplotlib.pyplot as plt
 from io import StringIO
 
+plt.rcParams['font.size'] = 14
+plt.rcParams['axes.titlesize'] = 16
+plt.rcParams['axes.labelsize'] = 16
+plt.rcParams['legend.fontsize'] = 14
+plt.rcParams['xtick.labelsize'] = 14
+plt.rcParams['ytick.labelsize'] = 14
+
 # --------- raw data (unchanged) ----------
 csv_data = """Distribution, Target, Actual, Dropped, Never Sent, Median, 90th, 99th, 99.9th, 99.99th, Start, StartTsc
 zero, 129515, 129515, 0, 1713, 14.0, 17.0, 20.0, 120.0, 210.0, 1744648003, 4129551387324060
