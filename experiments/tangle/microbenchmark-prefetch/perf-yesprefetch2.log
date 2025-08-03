@@ -1,0 +1,15 @@
+Performance counter stats for './iokerneld':
+
+   861,480,814,451      cycles                                                        (49.98%)
+ 1,704,009,255,297      instructions              #    1.98  insn per cycle           (62.49%)
+   333,026,468,275      L1-dcache-loads                                               (62.49%)
+     4,526,296,379      L1-dcache-load-misses     #    1.36% of all L1-dcache accesses  (62.52%)
+     5,364,238,205      l2_rqsts.references                                           (62.53%)
+     2,981,639,375      l2_rqsts.miss                                                 (62.53%)
+     1,303,575,119      LLC-loads                                                     (50.02%)
+           232,547      LLC-load-misses           #    0.02% of all LL-cache accesses  (49.99%)
+
+     334.215821185 seconds time elapsed
+
+     332.874786000 seconds user
+       0.416003000 seconds sys
