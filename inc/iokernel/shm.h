@@ -14,6 +14,8 @@
 
 #define INGRESS_MBUF_SHM_KEY 0x696d736b /* "imsk" */
 #define INGRESS_MBUF_SHM_SIZE 0x20000000
+// two-iok: half the size for the second instance
+#define INGRESS_MBUF_SHM_SIZE_HALF 0x10000000
 
 #define IOKERNEL_INFO_KEY 0x696e666f /* "info" */
 #define IOKERNEL_INFO_SIZE PGSIZE_4KB

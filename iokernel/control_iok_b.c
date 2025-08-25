@@ -618,8 +618,8 @@ int control_init(void)
 	// Make sure it's an abstract namespace path.
 	assert(CONTROL_SOCK_PATH[0] == '\0');
 
-	BUILD_ASSERT(sizeof(CONTROL_SOCK_PATH) <= sizeof(addr.sun_path));
-	memcpy(addr.sun_path, CONTROL_SOCK_PATH, sizeof(CONTROL_SOCK_PATH));
+	BUILD_ASSERT(sizeof(CONTROL_SOCK_PATH) <= sizeof(addr.sun_path) - 2); // two-iok: used -2 here
+	memcpy(addr.sun_path, "\0/control/iokernelb.sock", sizeof(CONTROL_SOCK_PATH)); // two-iok: used "\0/control/iokernelb.sock" as CONTROL_SOCK_PATH
 
 	sfd = socket(AF_UNIX, SOCK_STREAM, 0);
 	if (sfd == -1) {
@@ -630,13 +630,6 @@ int control_init(void)
 	if (bind(sfd, (struct sockaddr *)&addr,
 		 sizeof(addr.sun_family) + sizeof(CONTROL_SOCK_PATH)) == -1) {
 		log_err("control: bind() failed %i [%s]", errno, strerror(errno));
-		close(sfd);
-		return -errno;
-	}
-
-	// two-iok: enable address reuse
-	if (setsockopt(sfd, SOL_SOCKET, SO_REUSEADDR, (struct sockaddr *)&addr, sizeof(struct sockaddr_un)) == -1) {
-		log_err("control: setsockopt() failed [%s]", strerror(errno));
 		close(sfd);
 		return -errno;
 	}

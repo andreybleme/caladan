@@ -957,10 +957,10 @@ int sched_init(void)
 	int i;
 	bool valid = true;
 
-	// two-iok: use half of available CPUs
-	int cpu_count_iok_a = cpu_count / 2;
+    // two-iok: use half of CPU cores
+    int cpu_count_iok_b = cpu_count / 2;
 
-	bitmap_init(sched_allowed_cores, cpu_count_iok_a, false);
+	bitmap_init(sched_allowed_cores, cpu_count_iok_b, false);
 
 	/*
 	 * first pass: scan and log CPUs
@@ -981,8 +981,8 @@ int sched_init(void)
 	 * second pass: determine available CPUs
 	 */
 
-	// two-iok: use half of available CPUs
-	for (i = 0; i < cpu_count_iok_a; i++) {
+     // two-iok: use half of CPU cores
+	for (i = cpu_count_iok_b; i < cpu_count; i++) {
 		if (cpu_info_tbl[i].package != managed_numa_node && sched_ops != &numa_ops)
 			continue;
 
@@ -1003,7 +1003,8 @@ int sched_init(void)
 	 * third pass: reserve cores for iokernel and system
 	 */
 
-	sched_ctrl_core = bitmap_find_next_set(sched_allowed_cores, NCPU, 0);
+    // two-iok: start with first of the available CPUs
+	sched_ctrl_core = bitmap_find_next_set(sched_allowed_cores, NCPU, cpu_count - 1);
 	if (cfg.noht)
 		sched_dp_core = bitmap_find_next_set(sched_allowed_cores, NCPU, sched_ctrl_core + 1);
 	else
@@ -1012,7 +1013,7 @@ int sched_init(void)
 	bitmap_clear(sched_allowed_cores, sched_dp_core);
 	log_info("sched: dataplane on %d, control on %d",
 		 sched_dp_core, sched_ctrl_core);
-	log_info("sched: iokernel a using %d CPU", cpu_count_iok_a);
+    log_info("sched: iokernel b using %d CPU", cpu_count_iok_b);
 
 	/* check if configuration disables hyperthreads */
 	if (cfg.noht) {
