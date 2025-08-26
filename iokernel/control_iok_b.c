@@ -180,11 +180,13 @@ static struct proc *control_create_proc(int mem_fd, size_t len,
 	if (len < sizeof(hdr))
 		goto fail;
 
-	shbuf = mmap(NULL, len, PROT_READ|PROT_WRITE, MAP_SHARED, mem_fd, 0);
+	// two-iok: use only half of len to map half of the available memory
+	shbuf = mmap(NULL, len / 2, PROT_READ|PROT_WRITE, MAP_SHARED, mem_fd, 0);
 	if (shbuf == MAP_FAILED)
 		goto fail;
 	reg.base = shbuf;
-	reg.len = len;
+	// two-iok: use only half of len to map half of the available memory
+	reg.len = len / 2;
 
 	/* parse the control header */
 	memcpy(&hdr, (struct control_hdr *)shbuf, sizeof(hdr)); /* TOCTOU */
@@ -586,22 +588,30 @@ int control_init(void)
 	void *shbuf;
 
 	if (!cfg.vfio_directpath) {
+		// two-iok: set to "false" to avoid creating the memory segment again (already done in IOK-a)
 		shbuf = mem_map_shm(INGRESS_MBUF_SHM_KEY, NULL, INGRESS_MBUF_SHM_SIZE,
-				cfg.no_hugepages ? PGSIZE_4KB : PGSIZE_2MB, true);
+                    cfg.no_hugepages ? PGSIZE_4KB : PGSIZE_2MB, false); // do not create, just open
 		if (shbuf == MAP_FAILED) {
-			log_err("control: failed to map rx buffer area (%s)", strerror(errno));
-			if (errno == EEXIST)
-				log_err("Shared memory region is already mapped. Please close any "
-					    "running iokernels, and be sure to run "
-					    "scripts/setup_machine.sh to set proper sysctl parameters.");
+			log_err("control: failed to open rx buffer area (%s)", strerror(errno));
 			return -1;
 		}
+		// shbuf = mem_map_shm(INGRESS_MBUF_SHM_KEY, NULL, INGRESS_MBUF_SHM_SIZE,
+		// 		cfg.no_hugepages ? PGSIZE_4KB : PGSIZE_2MB, true);
+		// if (shbuf == MAP_FAILED) {
+		// 	log_err("control: failed to map rx buffer area (%s)", strerror(errno));
+		// 	if (errno == EEXIST)
+		// 		log_err("Shared memory region is already mapped. Please close any "
+		// 			    "running iokernels, and be sure to run "
+		// 			    "scripts/setup_machine.sh to set proper sysctl parameters.");
+		// 	return -1;
+		// }
 		dp.ingress_mbuf_region.base = shbuf;
 		dp.ingress_mbuf_region.len = INGRESS_MBUF_SHM_SIZE;
 
 	}
 
-	shbuf = mem_map_shm(IOKERNEL_INFO_KEY, NULL, IOKERNEL_INFO_SIZE, PGSIZE_4KB, true);
+	// two-iok: avoid creating the memory segment again (already done by iok-a)
+	shbuf = mem_map_shm(IOKERNEL_INFO_KEY, NULL, IOKERNEL_INFO_SIZE, PGSIZE_4KB, false);
 	if (shbuf == MAP_FAILED) {
 		log_err("control: failed to map iokernel control header");
 		return -1;
