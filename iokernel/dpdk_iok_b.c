@@ -264,6 +264,9 @@ int dpdk_init(void)
 		ARGV("--vdev=net_tap0");
 	}
 
+	// two-iok: use auto (secondary here)
+	argv[argc++] = "--proc-type=auto";
+
 	/* include any user-supplied arguments */
 	for (i = 0; i < dpdk_argc; i++)
 		ARGV(dpdk_argv[i]);
