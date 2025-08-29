@@ -140,25 +140,25 @@ cargo build --release
 # start iokerneld
 sudo ./iokerneld
 # run server app
-sudo ./apps/synthetic/target/release/synthetic 128.110.218.116:5000 --config server.config --mode spawner-server
+sudo ./apps/synthetic/target/release/synthetic 128.110.218.103:5000 --config server.config --mode spawner-server
 
 # run client app (always use IP from server node)
-sudo ./apps/synthetic/target/release/synthetic 128.110.218.116:5000 --config client.config --mode runtime-client
+sudo ./apps/synthetic/target/release/synthetic 128.110.218.103:5000 --config client.config --mode runtime-client
 
 # other useful params
-sudo ./apps/synthetic/target/release/synthetic 128.110.218.116:5000 --config client.config --mode runtime-client --output=buckets
+sudo ./apps/synthetic/target/release/synthetic 128.110.218.103:5000 --config client.config --mode runtime-client --output=buckets
 
-sudo ./apps/synthetic/target/release/synthetic 128.110.218.116:5000 --config client.config --mode runtime-client --mpps=0.04
-sudo ./apps/synthetic/target/release/synthetic 128.110.218.116:5000 --config client.config --mode runtime-client --mpps=0.1
-sudo ./apps/synthetic/target/release/synthetic 128.110.218.116:5000 --config client.config --mode runtime-client --start_mpps=0.005 --mpps=0.05 --samples=20 --rampup=4 --intersample_sleep=2
-sudo ./apps/synthetic/target/release/synthetic 128.110.218.116:5000 --config client.config --mode runtime-client --start_mpps=0.05 --mpps=4.00 --samples=20 --rampup=4 --intersample_sleep=2
-sudo ./apps/synthetic/target/release/synthetic 128.110.218.116:5000 --config client.config --mode runtime-client --start_mpps=0.005 --mpps=4.4 --samples=40 --rampup=5
+sudo ./apps/synthetic/target/release/synthetic 128.110.218.103:5000 --config client.config --mode runtime-client --mpps=0.04
+sudo ./apps/synthetic/target/release/synthetic 128.110.218.103:5000 --config client.config --mode runtime-client --mpps=0.1
+sudo ./apps/synthetic/target/release/synthetic 128.110.218.103:5000 --config client.config --mode runtime-client --start_mpps=0.005 --mpps=0.05 --samples=20 --rampup=4 --intersample_sleep=2
+sudo ./apps/synthetic/target/release/synthetic 128.110.218.103:5000 --config client.config --mode runtime-client --start_mpps=0.05 --mpps=4.00 --samples=20 --rampup=4 --intersample_sleep=2
+sudo ./apps/synthetic/target/release/synthetic 128.110.218.103:5000 --config client.config --mode runtime-client --start_mpps=0.005 --mpps=4.4 --samples=40 --rampup=5
 
 # bimodal (99% light reqs 83 fake work, 1% heavy reqs 918 fake work)
-sudo ./apps/synthetic/target/release/synthetic 128.110.218.116:5000 --config client.config --mode runtime-client --start_mpps=0.01 --mpps=3.00 --samples=20 --rampup=4 --intersample_sleep=2 --distspec=bimodal:0.99:83:918
+sudo ./apps/synthetic/target/release/synthetic 128.110.218.103:5000 --config client.config --mode runtime-client --start_mpps=0.01 --mpps=3.00 --samples=20 --rampup=4 --intersample_sleep=2 --distspec=bimodal:0.99:83:918
 # bimodal (90% light reqs 83 fake work, 10% heavy reqs 918 fake work)
-sudo ./apps/synthetic/target/release/synthetic 128.110.218.116:5000 --config client.config --mode runtime-client --start_mpps=0.005 --mpps=4.00 --samples=20 --rampup=4 --intersample_sleep=2 --distspec=bimodal:0.90:83:918
-# server (node-0): 128.110.218.116/21 (multi iokernels)
+sudo ./apps/synthetic/target/release/synthetic 128.110.218.103:5000 --config client.config --mode runtime-client --start_mpps=0.005 --mpps=4.00 --samples=20 --rampup=4 --intersample_sleep=2 --distspec=bimodal:0.90:83:918
+# server (node-0): 128.110.218.103/21 (multi iokernels)
 # client (node-1): 128.110.218.150/21
 
 # iok A
@@ -173,7 +173,7 @@ sudo ./apps/synthetic/target/release/synthetic 128.110.218.116:5000 --config cli
 
 # # server.config
 # an example runtime config file
-host_addr 128.110.218.116
+host_addr 128.110.218.103
 host_netmask 255.255.248.0
 host_gateway 128.110.218.1
 runtime_kthreads 4
@@ -182,10 +182,18 @@ runtime_priority lc
 
 # # client.config
 # an example runtime config file
-host_addr 128.110.218.117
+host_addr 128.110.218.112
 host_netmask 255.255.248.0
 host_gateway 128.110.218.1
 runtime_kthreads 6
 runtime_spinning_kthreads 6
 runtime_guaranteed_kthreads 6
 runtime_priority lc
+
+
+# =========== strace to debug segmentation fault
+
+sudo strace -f -o /tmp/ika.strace -p <IOKernel-A-PID>
+tail -n 200 /tmp/ika.strace
+
+sudo strace -f -o /tmp/ika_secondary.strace -p 46888
