@@ -30,9 +30,18 @@ static struct rx_net_hdr *rx_prepend_rx_preamble(struct rte_mbuf *buf)
 	struct rx_net_hdr *net_hdr;
 	uint64_t masked_ol_flags;
 
+	// two-iok: check if headroom is sufficient
+	if (unlikely(rte_pktmbuf_headroom(buf) < sizeof(struct rx_net_hdr))) {
+        log_debug_ratelimited("rx: no headroom for rx preamble");
+        return NULL;
+    }
+
 	net_hdr = (struct rx_net_hdr *) rte_pktmbuf_prepend(buf,
 			(uint16_t) sizeof(*net_hdr));
 	RTE_ASSERT(net_hdr != NULL);
+	// two-iok: check if net_hdr is NULL
+	if (unlikely(net_hdr == NULL))
+        return NULL;
 
 	net_hdr->completion_data = (unsigned long)buf;
 	net_hdr->len = rte_pktmbuf_pkt_len(buf) - sizeof(*net_hdr);
@@ -115,6 +124,14 @@ static bool azure_arp_response(struct rte_mbuf *buf)
 
 static void rx_one_pkt(struct rte_mbuf *buf)
 {
+	// two-iok: add buffer checks
+	if (!buf) {
+        log_debug("rx: NULL buffer");
+        return;
+    }
+    if (unlikely(rte_pktmbuf_data_len(buf) < sizeof(struct rte_ether_hdr)))
+        goto fail_free;
+
 	int ret;
 	struct proc *p;
 	struct rte_arp_hdr *arphdr;
@@ -136,10 +153,16 @@ static void rx_one_pkt(struct rte_mbuf *buf)
 	ether_type = rte_be_to_cpu_16(ptr_mac_hdr->ether_type);
 
 	if (likely(ether_type == ETHTYPE_IP)) {
+		// two-iok: add buffer checks to see if IPV4 fits
+        if (unlikely(rte_pktmbuf_data_len(buf) < sizeof(struct rte_ether_hdr) + sizeof(struct rte_ipv4_hdr)))
+            goto fail_free;
 		iphdr = rte_pktmbuf_mtod_offset(buf, struct rte_ipv4_hdr *,
 			sizeof(*ptr_mac_hdr));
 		dst_ip = rte_be_to_cpu_32(iphdr->dst_addr);
 	} else if (ether_type == ETHTYPE_ARP) {
+		// two-iok: verify ARP header fits
+        if (unlikely(rte_pktmbuf_data_len(buf) < sizeof(struct rte_ether_hdr) + sizeof(struct rte_arp_hdr)))
+            goto fail_free;
 		arphdr = rte_pktmbuf_mtod_offset(buf, struct rte_arp_hdr *,
 			sizeof(*ptr_mac_hdr));
 		dst_ip = rte_be_to_cpu_32(arphdr->arp_data.arp_tip);
@@ -151,6 +174,9 @@ static void rx_one_pkt(struct rte_mbuf *buf)
 			bool success;
 			int n_sent = 0;
 			net_hdr = rx_prepend_rx_preamble(buf);
+			// two-iok: check if net_hdr is NULL
+			if (unlikely(net_hdr == NULL))
+        		goto fail_free;
 			for (int i = 0; i < dp.nr_clients; i++) {
 				success = rx_send_pkt_to_runtime(dp.clients[i], net_hdr);
 				if (success) {
@@ -219,43 +245,24 @@ fail_free:
  */
 bool rx_burst(void)
 {
-    struct rte_mbuf *bufs0[IOKERNEL_RX_BURST_SIZE];
-    struct rte_mbuf *bufs1[IOKERNEL_RX_BURST_SIZE];
-    uint16_t nb_rx0, nb_rx1;
-    uint16_t i = 0, j = 0;
+    struct rte_mbuf *bufs[IOKERNEL_RX_BURST_SIZE];
+    uint16_t nb_rx, i;
 
-    /* Retrieve packets from NIC queue 0 */
-    nb_rx0 = rte_eth_rx_burst(dp.port, 0, bufs0, IOKERNEL_RX_BURST_SIZE);
-    /* Retrieve packets from NIC queue 1 */
-    nb_rx1 = rte_eth_rx_burst(dp.port, 1, bufs1, IOKERNEL_RX_BURST_SIZE);
+    /* retrieve packets from NIC queue */
+    nb_rx = rte_eth_rx_burst(dp.port, 0, bufs, IOKERNEL_RX_BURST_SIZE);
+    STAT_INC(RX_PULLED, nb_rx);
+    if (nb_rx > 0)
+        log_debug("rx: received %d packets on port %d", nb_rx, dp.port);
 
-    /* Update statistics for both queues */
-    STAT_INC(RX_PULLED, nb_rx0 + nb_rx1);
-
-    if (nb_rx0 > 0)
-        log_debug("rx: received %d packets on port %d (queue 0)", nb_rx0, dp.port);
-    if (nb_rx1 > 0)
-        log_debug("rx: received %d packets on port %d (queue 1)", nb_rx1, dp.port);
-
-    /* Process packets in an interleaved fashion */
-    while (i < nb_rx0 || j < nb_rx1) {
-        if (i < nb_rx0) {
-            /* Prefetch for queue 0 */
-            if (i + RX_PREFETCH_STRIDE < nb_rx0)
-                prefetch(rte_pktmbuf_mtod(bufs0[i + RX_PREFETCH_STRIDE], char *));
-            rx_one_pkt(bufs0[i]);
-            i++;
+    for (i = 0; i < nb_rx; i++) {
+        if (i + RX_PREFETCH_STRIDE < nb_rx) {
+            prefetch(rte_pktmbuf_mtod(bufs[i + RX_PREFETCH_STRIDE],
+                char *));
         }
-        if (j < nb_rx1) {
-            /* Prefetch for queue 1 */
-            if (j + RX_PREFETCH_STRIDE < nb_rx1)
-                prefetch(rte_pktmbuf_mtod(bufs1[j + RX_PREFETCH_STRIDE], char *));
-            rx_one_pkt(bufs1[j]);
-            j++;
-        }
+        rx_one_pkt(bufs[i]);
     }
 
-    return (nb_rx0 > 0) || (nb_rx1 > 0);
+    return nb_rx > 0;
 }
 
 /*
@@ -314,6 +321,10 @@ static struct rte_mempool *rx_pktmbuf_pool_create_in_shm(const char *name,
 		goto fail_free_mempool;
 	}
 
+	// two-iok: set up shared buffer pointers
+	uint8_t *full_base = (uint8_t *)dp.ingress_mbuf_region.base;
+    uint8_t *shbuf_base = full_base + 0;
+
 	shbuf = dp.ingress_mbuf_region.base;
 
 	/* hack to make sure that this memory area is registered in DPDK */
@@ -323,8 +334,8 @@ static struct rte_mempool *rx_pktmbuf_pool_create_in_shm(const char *name,
 	ret = rte_malloc_heap_create("rx_buf_heap");
 	if (ret < 0)
 		goto fail_unmap_memory;
-
-	ret = rte_malloc_heap_memory_add("rx_buf_heap", shbuf, INGRESS_MBUF_SHM_SIZE_HALF, NULL, 0, PGSIZE_2MB);
+	// two-iok: replaced shbuf with shbuf_base
+	ret = rte_malloc_heap_memory_add("rx_buf_heap", shbuf_base, INGRESS_MBUF_SHM_SIZE_HALF, NULL, 0, PGSIZE_2MB);
 	if (ret < 0)
 		goto fail_unmap_memory;
 
@@ -350,7 +361,8 @@ static struct rte_mempool *rx_pktmbuf_pool_create_in_shm(const char *name,
 	return mp;
 
 fail_unmap_memory:
-	mem_unmap_shm(shbuf);
+	// two-iok: do NOT unmap the global dp.ingress_mbuf_region here.
+    // mem_unmap_shm(shbuf); // REMOVE — this region is managed elsewhere.
 fail_free_mempool:
 	rte_mempool_free(mp);
 fail:
