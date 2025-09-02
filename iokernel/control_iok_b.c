@@ -18,6 +18,7 @@
 #include <sys/mman.h>
 #include <stdio.h>
 #include <fcntl.h>
+#include <execinfo.h> // two-iok: copilot - for backtrace
 
 #include <base/fd_transfer.h>
 #include <base/stddef.h>
@@ -165,8 +166,15 @@ static int control_init_hwq(struct shm_region *r,
 	return 0;
 }
 
-static struct proc *control_create_proc(int mem_fd, size_t len,
-		 pid_t pid)
+static void log_backtrace(const char *msg) // two-iok: copilot
+{
+    void *bt[32];
+    int n = backtrace(bt, 32);
+    log_err("%s", msg);
+    backtrace_symbols_fd(bt, n, STDERR_FILENO);
+}
+
+static struct proc *control_create_proc(int mem_fd, size_t len, pid_t pid)
 {
 	struct control_hdr hdr;
 	struct shm_region reg = {NULL};
@@ -176,17 +184,21 @@ static struct proc *control_create_proc(int mem_fd, size_t len,
 	void *shbuf = NULL;
 	int i, ret;
 
-	/* attach the shared memory region */
-	if (len < sizeof(hdr))
-		goto fail;
+	// two-iok: half size 2mb page aligned
+	size_t half = align_down(len / 2, PGSIZE_2MB);
+	size_t len_b = align_down(len - half, PGSIZE_2MB);
 
-	// two-iok: use only half of len to map half of the available memory
-	shbuf = mmap(NULL, len / 2, PROT_READ|PROT_WRITE, MAP_SHARED, mem_fd, 0);
-	if (shbuf == MAP_FAILED)
+	/* attach the shared memory region */
+	log_info("control_iok_b: mapping shared memory region, fd=%d, len=%zu, offset=%zu", mem_fd, len, half); // two-iok: copilot
+	// two-iok: use len_b as size and half as the offset
+	shbuf = mmap(NULL, len_b, PROT_READ|PROT_WRITE, MAP_SHARED, mem_fd, half);
+	if (shbuf == MAP_FAILED) {
+		log_backtrace("control_iok_b: mmap failed in control_create_proc"); // two-iok: copilot
 		goto fail;
+	}
 	reg.base = shbuf;
-	// two-iok: use only half of len to map half of the available memory
-	reg.len = len / 2;
+	reg.len = len_b;
+	log_info("control_iok_b: mapped region at %p, len=%zu", shbuf, reg.len); // two-iok: copilot
 
 	/* parse the control header */
 	memcpy(&hdr, (struct control_hdr *)shbuf, sizeof(hdr)); /* TOCTOU */
@@ -205,7 +217,8 @@ static struct proc *control_create_proc(int mem_fd, size_t len,
 		goto fail;
 
 	/* create the process */
-	nr_pages = div_up(len, PGSIZE_2MB);
+	// two-iok: use 'len_b' instead of plain 'len'
+	nr_pages = div_up(len_b, PGSIZE_2MB);
 	p = malloc(sizeof(*p) + nr_pages * sizeof(physaddr_t));
 	if (!p)
 		goto fail;
@@ -303,6 +316,7 @@ static struct proc *control_create_proc(int mem_fd, size_t len,
 	return p;
 
 fail:
+	log_backtrace("control_iok_b: fail in control_create_proc"); // two-iok: copilot
 	close(mem_fd);
 	if (p)
 		free(p->overflow_queue);
@@ -321,7 +335,16 @@ static void control_destroy_proc(struct proc *p)
 		release_directpath_ctx(p);
 
 	nr_clients--;
-	munmap(p->region.base, p->region.len);
+
+	// two-iok: copilot - only unmap our own region
+	log_info("control_iok_b: unmapping region at %p, len=%zu", p->region.base, p->region.len); // two-iok: copilot
+    if (p->region.base && p->region.len) {
+        int ret = munmap(p->region.base, p->region.len);
+        if (ret != 0) {
+            log_backtrace("control_iok_b: munmap failed in control_destroy_proc"); // two-iok: copilot
+        }
+    }
+
 	free(p->overflow_queue);
 	free(p);
 }
@@ -588,40 +611,28 @@ int control_init(void)
 	void *shbuf;
 
 	if (!cfg.vfio_directpath) {
-		// two-iok: set to "false" to avoid creating the memory segment again (already done in IOK-a)
+		// two-iok: copilot - only open shared memory in iokernel-b
 		shbuf = mem_map_shm(INGRESS_MBUF_SHM_KEY, NULL, INGRESS_MBUF_SHM_SIZE,
-                    cfg.no_hugepages ? PGSIZE_4KB : PGSIZE_2MB, false); // do not create, just open
+                            cfg.no_hugepages ? PGSIZE_4KB : PGSIZE_2MB, false);
 		if (shbuf == MAP_FAILED) {
 			log_err("control: failed to open rx buffer area (%s)", strerror(errno));
 			return -1;
 		}
-		// shbuf = mem_map_shm(INGRESS_MBUF_SHM_KEY, NULL, INGRESS_MBUF_SHM_SIZE,
-		// 		cfg.no_hugepages ? PGSIZE_4KB : PGSIZE_2MB, true);
-		// if (shbuf == MAP_FAILED) {
-		// 	log_err("control: failed to map rx buffer area (%s)", strerror(errno));
-		// 	if (errno == EEXIST)
-		// 		log_err("Shared memory region is already mapped. Please close any "
-		// 			    "running iokernels, and be sure to run "
-		// 			    "scripts/setup_machine.sh to set proper sysctl parameters.");
-		// 	return -1;
-		// }
 		dp.ingress_mbuf_region.base = shbuf;
 		dp.ingress_mbuf_region.len = INGRESS_MBUF_SHM_SIZE;
 
+		// two-iok: copilot - only open control header in iokernel-b
+		shbuf = mem_map_shm(IOKERNEL_INFO_KEY, NULL, IOKERNEL_INFO_SIZE, PGSIZE_4KB, false);
+		if (shbuf == MAP_FAILED) {
+			log_err("control: failed to map iokernel control header");
+			return -1;
+		}
+		iok_info = (struct iokernel_info *)shbuf;
+		memcpy(iok_info->managed_cores, sched_allowed_cores, sizeof(sched_allowed_cores));
+
+		if (nic_pci_addr_str)
+			memcpy(&iok_info->directpath_pci, &nic_pci_addr, sizeof(nic_pci_addr));
 	}
-
-	// two-iok: avoid creating the memory segment again (already done by iok-a)
-	shbuf = mem_map_shm(IOKERNEL_INFO_KEY, NULL, IOKERNEL_INFO_SIZE, PGSIZE_4KB, false);
-	if (shbuf == MAP_FAILED) {
-		log_err("control: failed to map iokernel control header");
-		return -1;
-	}
-
-	iok_info = (struct iokernel_info *)shbuf;
-	memcpy(iok_info->managed_cores, sched_allowed_cores, sizeof(sched_allowed_cores));
-
-	if (nic_pci_addr_str)
-		memcpy(&iok_info->directpath_pci, &nic_pci_addr, sizeof(nic_pci_addr));
 
 	addr.sun_family = AF_UNIX;
 

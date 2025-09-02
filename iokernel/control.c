@@ -18,6 +18,7 @@
 #include <sys/mman.h>
 #include <stdio.h>
 #include <fcntl.h>
+#include <execinfo.h> // two-iok: copilot - for backtrace
 
 #include <base/fd_transfer.h>
 #include <base/stddef.h>
@@ -165,8 +166,15 @@ static int control_init_hwq(struct shm_region *r,
 	return 0;
 }
 
-static struct proc *control_create_proc(int mem_fd, size_t len,
-		 pid_t pid)
+static void log_backtrace(const char *msg) // two-iok: copilot
+{
+    void *bt[32];
+    int n = backtrace(bt, 32);
+    log_err("%s", msg);
+    backtrace_symbols_fd(bt, n, STDERR_FILENO);
+}
+
+static struct proc *control_create_proc(int mem_fd, size_t len, pid_t pid)
 {
 	struct control_hdr hdr;
 	struct shm_region reg = {NULL};
@@ -176,15 +184,19 @@ static struct proc *control_create_proc(int mem_fd, size_t len,
 	void *shbuf = NULL;
 	int i, ret;
 
-	/* attach the shared memory region */
-	if (len < sizeof(hdr))
-		goto fail;
+	// two-iok: half size 2mb page aligned
+	size_t half = align_down(len / 2, PGSIZE_2MB);
 
-	shbuf = mmap(NULL, len, PROT_READ|PROT_WRITE, MAP_SHARED, mem_fd, 0);
-	if (shbuf == MAP_FAILED)
+	/* attach the shared memory region */
+	log_info("control: mapping shared memory region, fd=%d, len=%zu, offset=0", mem_fd, len); // two-iok: copilot
+	shbuf = mmap(NULL, half, PROT_READ|PROT_WRITE, MAP_SHARED, mem_fd, 0);
+	if (shbuf == MAP_FAILED) {
+		log_backtrace("control: mmap failed in control_create_proc"); // two-iok: copilot
 		goto fail;
+	}
 	reg.base = shbuf;
-	reg.len = len;
+	reg.len = half;
+	log_info("control: mapped region at %p, len=%zu", shbuf, reg.len); // two-iok: copilot
 
 	/* parse the control header */
 	memcpy(&hdr, (struct control_hdr *)shbuf, sizeof(hdr)); /* TOCTOU */
@@ -203,7 +215,8 @@ static struct proc *control_create_proc(int mem_fd, size_t len,
 		goto fail;
 
 	/* create the process */
-	nr_pages = div_up(len, PGSIZE_2MB);
+	// two-iok: use reg.len (half), instead of plain 'len'
+	nr_pages = div_up(reg.len, PGSIZE_2MB);
 	p = malloc(sizeof(*p) + nr_pages * sizeof(physaddr_t));
 	if (!p)
 		goto fail;
@@ -301,6 +314,7 @@ static struct proc *control_create_proc(int mem_fd, size_t len,
 	return p;
 
 fail:
+	log_backtrace("control: fail in control_create_proc"); // two-iok: copilot
 	close(mem_fd);
 	if (p)
 		free(p->overflow_queue);
@@ -319,7 +333,16 @@ static void control_destroy_proc(struct proc *p)
 		release_directpath_ctx(p);
 
 	nr_clients--;
-	munmap(p->region.base, p->region.len);
+
+	// two-iok: copilot - only unmap our own region
+	log_info("control: unmapping region at %p, len=%zu", p->region.base, p->region.len); // two-iok: copilot
+	if (p->region.base && p->region.len) {
+		int ret = munmap(p->region.base, p->region.len);
+		if (ret != 0) {
+			log_backtrace("control: munmap failed in control_destroy_proc"); // two-iok: copilot
+		}
+	}
+
 	free(p->overflow_queue);
 	free(p);
 }
@@ -585,22 +608,17 @@ int control_init(void)
 	int sfd, ret;
 	void *shbuf;
 
-	if (!cfg.vfio_directpath) {
-		shbuf = mem_map_shm(INGRESS_MBUF_SHM_KEY, NULL, INGRESS_MBUF_SHM_SIZE,
-				cfg.no_hugepages ? PGSIZE_4KB : PGSIZE_2MB, true);
-		if (shbuf == MAP_FAILED) {
-			log_err("control: failed to map rx buffer area (%s)", strerror(errno));
-			if (errno == EEXIST)
-				log_err("Shared memory region is already mapped. Please close any "
-					    "running iokernels, and be sure to run "
-					    "scripts/setup_machine.sh to set proper sysctl parameters.");
-			return -1;
-		}
-		dp.ingress_mbuf_region.base = shbuf;
-		dp.ingress_mbuf_region.len = INGRESS_MBUF_SHM_SIZE;
-
+	// two-iok: copilot - only create shared memory in iokernel-a
+	shbuf = mem_map_shm(INGRESS_MBUF_SHM_KEY, NULL, INGRESS_MBUF_SHM_SIZE,
+			cfg.no_hugepages ? PGSIZE_4KB : PGSIZE_2MB, true);
+	if (shbuf == MAP_FAILED) {
+		log_err("control: failed to map rx buffer area (%s)", strerror(errno));
+		return -1;
 	}
+	dp.ingress_mbuf_region.base = shbuf;
+	dp.ingress_mbuf_region.len = INGRESS_MBUF_SHM_SIZE;
 
+	// two-iok: copilot - only create control header in iokernel-a
 	shbuf = mem_map_shm(IOKERNEL_INFO_KEY, NULL, IOKERNEL_INFO_SIZE, PGSIZE_4KB, true);
 	if (shbuf == MAP_FAILED) {
 		log_err("control: failed to map iokernel control header");
