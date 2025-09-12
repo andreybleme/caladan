@@ -141,8 +141,8 @@ void dataplane_loop(void)
 		work_done = false;
 
 		/* handle a burst of ingress packets */
-		// two-iok: removed rx_burst call
-        // work_done |= rx_burst();
+		// two-iok: removed rx_burst call (came back with it later)
+        work_done |= rx_burst();
 
 		/* adjust core assignments */
 		sched_poll();

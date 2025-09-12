@@ -326,6 +326,7 @@ static struct rte_mempool *rx_pktmbuf_pool_create_in_shm(const char *name,
     uint8_t *shbuf_base = full_base + 0;
 
 	shbuf = dp.ingress_mbuf_region.base;
+	log_info("ingress_mbuf_region base = %p", dp.ingress_mbuf_region.base);
 
 	/* hack to make sure that this memory area is registered in DPDK */
 	/* use rte_extmem_* and rte_dev_dma_map in the future */
@@ -379,9 +380,13 @@ int rx_init()
 		return 0;
 
 	/* create a mempool in shared memory to hold the rx mbufs */
-	dp.rx_mbuf_pool = rx_pktmbuf_pool_create_in_shm("RX_MBUF_POOL",
-			IOKERNEL_NUM_MBUFS, MBUF_CACHE_SIZE, 0, RTE_MBUF_DEFAULT_BUF_SIZE,
-			rte_socket_id());
+	// dp.rx_mbuf_pool = rx_pktmbuf_pool_create_in_shm("RX_MBUF_POOL",
+	// 		IOKERNEL_NUM_MBUFS, MBUF_CACHE_SIZE, 0, RTE_MBUF_DEFAULT_BUF_SIZE,
+	// 		rte_socket_id());
+
+	dp.rx_mbuf_pool = rte_pktmbuf_pool_create("RX_MBUF_POOL",
+		IOKERNEL_NUM_MBUFS, MBUF_CACHE_SIZE, 0, RTE_MBUF_DEFAULT_BUF_SIZE,
+		rte_socket_id());
 
 	if (dp.rx_mbuf_pool == NULL) {
 		log_err("rx: couldn't create rx mbuf pool");

@@ -319,6 +319,7 @@ static struct rte_mempool *rx_pktmbuf_pool_create_in_shm(const char *name,
     uint8_t *shbuf_base = full_base + INGRESS_MBUF_SHM_SIZE_HALF;
 
     shbuf = dp.ingress_mbuf_region.base;
+    log_info("ingress_mbuf_region base = %p", dp.ingress_mbuf_region.base);
 
     /* hack to make sure that this memory area is registered in DPDK */
     /* use rte_extmem_* and rte_dev_dma_map in the future */
@@ -376,12 +377,20 @@ int rx_init()
 
     /* create a mempool in shared memory to hold the rx mbufs */
     // two-iok: rename MBUF and use half the size
-    dp.rx_mbuf_pool = rx_pktmbuf_pool_create_in_shm("RX_MBUF_POOL_B",
-            (4096 * 16), MBUF_CACHE_SIZE, 0, RTE_MBUF_DEFAULT_BUF_SIZE,
-            rte_socket_id());
+    // two-iok: reuse the mem pool created bu iokernel-a
+    // dp.rx_mbuf_pool = rx_pktmbuf_pool_create_in_shm("RX_MBUF_POOL_B",
+    //         (4096 * 16), MBUF_CACHE_SIZE, 0, RTE_MBUF_DEFAULT_BUF_SIZE,
+    //         rte_socket_id());
 
+    // if (dp.rx_mbuf_pool == NULL) {
+    //     log_err("rx: couldn't create rx mbuf pool");
+    //     return -1;
+    // }
+
+    // two-iok: use the SAME pool that iokernel-a created
+    dp.rx_mbuf_pool = rte_mempool_lookup("RX_MBUF_POOL");
     if (dp.rx_mbuf_pool == NULL) {
-        log_err("rx: couldn't create rx mbuf pool");
+        log_err("rx: couldn't find shared rx mbuf pool 'RX_MBUF_POOL'");
         return -1;
     }
 
