@@ -40,11 +40,23 @@ static void dp_clients_add_client(struct proc *p)
 		return;
 	}
 
-	ret = rte_hash_lookup(dp.ip_to_proc, &p->ip_addr);
-	if (ret != -ENOENT) {
-		log_err("Duplicate IP address detected.");
-		goto fail;
+	// log all ip to proc mappings
+	for (int i = 0; i < dp.nr_clients; i++) {
+		uint32_t ip = dp.clients[i]->ip_addr;
+		log_info("dp_clients: iok-a: client %d has ip 0x%x (%u.%u.%u.%u)",
+				 i, ip,
+				 (ip >> 24) & 0xFF,
+				 (ip >> 16) & 0xFF,
+				 (ip >> 8) & 0xFF,
+				 ip & 0xFF);
 	}
+
+	// ret = rte_hash_lookup(dp.ip_to_proc, &p->ip_addr);
+	// two-iok: allow duplicate IPs for now
+	// if (ret != -ENOENT) {
+	// 	log_err("Duplicate IP address detected.");
+	// 	goto fail;
+	// }
 
 	ret = rte_hash_add_key_data(dp.ip_to_proc, &p->ip_addr, p);
 	if (ret < 0) {

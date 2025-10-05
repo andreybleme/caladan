@@ -70,7 +70,8 @@ static const struct rte_eth_conf port_conf_default = {
 	.rx_adv_conf = {
 		.rss_conf = {
 			.rss_key = NULL,
-			.rss_hf = RTE_ETH_RSS_NONFRAG_IPV4_TCP | RTE_ETH_RSS_NONFRAG_IPV4_UDP,
+			// two-iok: enable IP hash for better flow locality
+			.rss_hf = RTE_ETH_RSS_IP | RTE_ETH_RSS_UDP | RTE_ETH_RSS_TCP | RTE_ETH_RSS_L3_SRC_ONLY | RTE_ETH_RSS_L3_DST_ONLY | RTE_ETH_RSS_L4_SRC_ONLY | RTE_ETH_RSS_L4_DST_ONLY,
 		},
 	},
 	.txmode = {
@@ -102,6 +103,8 @@ static inline int dpdk_port_init(uint8_t port, struct rte_mempool *mbuf_pool)
 
 	/* Get default device configuration */
 	rte_eth_dev_info_get(port, &dev_info);
+	// two-iok: print NIC capabilities
+	log_info("iok-b: Max RX queues: %u, RSS offload: %s", dev_info.max_rx_queues, (dev_info.rx_offload_capa & RTE_ETH_RX_OFFLOAD_RSS_HASH) ? "YES" : "NO");
 	dp.device = dev_info.device;
 	rxconf = &dev_info.default_rxconf;
 	rxconf->rx_free_thresh = 64;
@@ -152,6 +155,20 @@ static inline int dpdk_port_init(uint8_t port, struct rte_mempool *mbuf_pool)
 	// retval = rte_eth_dev_start(port);
 	// if (retval < 0)
 	// 	return retval;
+
+	// two-iok: configure RSS with more queues
+	// In dpdk_port_init, after rte_eth_dev_configure:
+	struct rte_eth_rss_reta_entry64 reta_conf[2];
+	memset(reta_conf, 0, sizeof(reta_conf));
+
+	for (int i = 0; i < 128; i++) {
+		int idx = i / RTE_RETA_GROUP_SIZE;
+		int shift = i % RTE_RETA_GROUP_SIZE;
+		reta_conf[idx].mask |= (1ULL << shift);
+		reta_conf[idx].reta[shift] = i % 2; // Alternate between queue 0 and 1
+	}
+
+	rte_eth_dev_rss_reta_update(port, reta_conf, 128);
 
 	/* Display the port MAC address. */
 	struct rte_ether_addr addr;
@@ -250,22 +267,23 @@ int dpdk_init(void)
 	else
 		ARGV("--socket-mem=128");
 
-	if (cfg.vfio_directpath) {
-		ARGV("--vdev=net_tap0");
-		ARGV("--allow");
-		ARGV("0000:00:00.0");
-	} else if (cfg.azure_arp_mode) {
-		ARGV("--allow");
-		ARGV("0000:00:00.0");
-	} else if (nic_pci_addr_str) {
-		ARGV("--allow");
-		ARGV(nic_pci_addr_str);
-	} else {
-		ARGV("--vdev=net_tap0");
-	}
+	// if (cfg.vfio_directpath) {
+	// 	ARGV("--vdev=net_tap0");
+	// 	ARGV("--allow");
+	// 	ARGV("0000:00:00.0");
+	// } else if (cfg.azure_arp_mode) {
+	// 	ARGV("--allow");
+	// 	ARGV("0000:00:00.0");
+	// } else if (nic_pci_addr_str) {
+	// 	ARGV("--allow");
+	// 	ARGV(nic_pci_addr_str);
+	// } else {
+	// 	ARGV("--vdev=net_tap0");
+	// }
 
-	// two-iok: use auto (secondary here)
-	argv[argc++] = "--proc-type=auto";
+	// two-iok: use primary (instead of auto)
+	argv[argc++] = "--proc-type=secondary";
+	argv[argc++] = "--no-telemetry";
 
 	/* include any user-supplied arguments */
 	for (i = 0; i < dpdk_argc; i++)
@@ -282,7 +300,8 @@ int dpdk_init(void)
 	}
 
 	/* check that there is a port to send/receive on */
-	if (!cfg.vfio_directpath && !rte_eth_dev_is_valid_port(0)) {
+	// two-iok: change from port 0 to port 1
+	if (!cfg.vfio_directpath && !rte_eth_dev_is_valid_port(1)) {
 		log_err("dpdk: no available ports");
 		return -1;
 	}
@@ -304,12 +323,22 @@ int dpdk_late_init(void)
 
 	/* initialize port */
 	dp.port = 1;
+
+	rte_eth_promiscuous_enable(dp.port);
+
+	// two-iok: print port MAC
+	struct rte_ether_addr m;
+	rte_eth_macaddr_get(dp.port, &m);
+	log_info("dpdk port %u mac %02x:%02x:%02x:%02x:%02x:%02x",
+			dp.port, m.addr_bytes[0], m.addr_bytes[1], m.addr_bytes[2],
+			m.addr_bytes[3], m.addr_bytes[4], m.addr_bytes[5]);
     // two-iok: used retval to improve debugging
-    int retval = dpdk_port_init(dp.port, dp.rx_mbuf_pool);
-	if (retval != 0) {
-		log_err("dpdk: cannot init port %"PRIu8 "\n", dp.port);
-		return -1;
-	}
+	// two-iok: remove the init on iokernel-b
+    // int retval = dpdk_port_init(dp.port, dp.rx_mbuf_pool);
+	// if (retval != 0) {
+	// 	log_err("dpdk: cannot init port %"PRIu8 "\n", dp.port);
+	// 	return -1;
+	// }
 
 	return 0;
 }
