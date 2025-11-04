@@ -36,4 +36,7 @@ def send_flow(name, sport, use_tcp=False):
 if __name__ == "__main__":
     t1 = Thread(target=send_flow, args=("flowA", 40001, False))  # UDP
     t2 = Thread(target=send_flow, args=("flowB", 50002, True))   # TCP
-    t1.start(); t2.start(); t1.join(); t2.join()
+    t1.start()
+    t2.start()
+    t1.join()
+    t2.join()
