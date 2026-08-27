@@ -1,114 +1,102 @@
 import pandas as pd
-import numpy as np
 import matplotlib.pyplot as plt
 from io import StringIO
 
-# ——— Style settings ———
-plt.rcParams['font.size']      = 20
-plt.rcParams['axes.titlesize'] = 22
-plt.rcParams['axes.labelsize'] = 22
-plt.rcParams['legend.fontsize'] = 14
-plt.rcParams['xtick.labelsize'] = 20
-plt.rcParams['ytick.labelsize'] = 20
+plt.rcParams['font.size'] = 24
+plt.rcParams['axes.titlesize'] = 26
+plt.rcParams['axes.labelsize'] = 26
+plt.rcParams['legend.fontsize'] = 24
+plt.rcParams['xtick.labelsize'] = 18
+plt.rcParams['ytick.labelsize'] = 24
 
-# ——— Script 1 data (CPU & Packets) ———
-cpu_usage = [
-    43.9, 45.0, 46.7, 43.6, 70.0, 75.0, 63.6, 68.1, 67.6, 75.0, 65.0,
-    66.7, 66.7, 49.3, 48.3, 47.9, 71.1, 59.7, 42.7, 59.1, 74.5, 38.0,
-    59.4, 72.1, 27.3, 81.2, 42.3, 45.9, 72.6, 15.9, 95.9,  7.1, 81.9,
-    22.1, 79.4, 21.8, 67.7, 25.7, 68.4, 19.1, 70.4,  4.7, 86.4
-]
-packets_processed = [
-    603955, 803477, 1001175, 1249629, 1600565,
-    1817890, 1973209, 2089455, 2099455
-]
-
-times_cpu  = np.linspace(0, 5, len(cpu_usage))
-times_pkts = np.linspace(0, 5, len(packets_processed))
-bar_width  = (times_cpu[1] - times_cpu[0]) * 0.8
-
-# ——— Script 2 data (Throughput) ———
-csv_data = """Distribution, Target, Actual, Dropped, Never Sent, Median, 90th, 99th, 99.9th, 99.99th, Start
-zero, 129515, 129515, 0, 1713, 14.0, 17.0, 20.0, 120.0, 210.0, 1744648003, 4129551387324060
-zero, 254152, 254152, 0, 3449, 14.0, 18.0, 21.0, 143.0, 220.0, 1744648020, 4129593681262712
-zero, 378915, 378915, 0, 5432, 13.0, 18.0, 21.0, 139.0, 222.0, 1744648038, 4129636553033392
-zero, 503548, 503548, 0, 7879, 13.0, 19.0, 22.0, 159.0, 236.0, 1744648057, 4129680513452334
-zero, 628245, 628245, 0, 11292, 12.0, 15.0, 21.0, 152.0, 222.0, 1744648076, 4129725750941037
-zero, 753130, 753130, 0, 11781, 13.0, 19.0, 23.0, 184.0, 241.0, 1744648095, 4129772105164400
-zero, 877810, 877810, 0, 15317, 11.0, 15.0, 19.0, 169.0, 240.0, 1744648115, 4129819866984288
-zero, 1001739, 1001739, 0, 18272, 13.0, 19.0, 24.0, 199.0, 252.0, 1744648135, 4129868447885176
-zero, 1126624, 1126624, 0, 23572, 12.0, 15.0, 18.0, 184.0, 242.0, 1744648156, 4129918532162397
-zero, 1246922, 1246922, 0, 60290, 12.0, 17.0, 25.0, 207.0, 271.0, 1744648178, 4129969948457544
-zero, 1368532, 1368532, 0, 88073, 12.0, 16.0, 21.0, 220.0, 255.0, 1744648199, 4130022062983059
-zero, 1497659, 1497659, 0, 58007, 12.0, 16.0, 21.0, 231.0, 264.0, 1744648222, 4130075810689413
-zero, 1501100, 1651100, 0, 263882, 12.0, 16.0, 23.0, 261.0, 301.0, 1744648245, 4130132155126428
-zero, 1735129, 1735129, 0, 186716, 13.0, 16.0, 23.0, 217.0, 251.0, 1744648269, 4130188620989949
-zero, 1878562, 1878562, 0, 930881, 13.0, 17.0, 41.0, 245.0, 273.0, 1744648293, 4130245561491750
-zero, 1997182, 1997182, 0, 890229, 13.0, 17.0, 40.0, 233.0, 259.0, 1744648317, 41303036448233312
+csv_data = """Distribution, Target, Actual, Dropped, Never Sent, Median, 90th, 99th, 99.9th, 99.99th, Start, StartTsc
+zero, 129606, 129606, 0, 1721, 14.0, 17.0, 19.0, 116.0, 209.0, 1761045752, 36530909127421260
+zero, 254076, 254076, 0, 3499, 14.0, 18.0, 21.0, 134.0, 216.0, 1761045770, 36530951309101528
+zero, 378595, 378595, 0, 5261, 13.0, 18.0, 20.0, 147.0, 227.0, 1761045788, 36530993750933424
+zero, 503273, 503273, 0, 7037, 12.0, 18.0, 21.0, 157.0, 235.0, 1761045805, 36531036457318940
+zero, 627898, 627898, 0, 8635, 11.0, 16.0, 20.0, 152.0, 229.0, 1761045822, 36531079413920745
+zero, 752278, 752278, 0, 10578, 11.0, 16.0, 21.0, 158.0, 233.0, 1761045840, 36531122734042416
+zero, 877088, 877088, 0, 12699, 11.0, 17.0, 22.0, 167.0, 236.0, 1761045860, 36531166742711560
+zero, 1001484, 1001484, 0, 14471, 11.0, 16.0, 22.0, 171.0, 239.0, 1761045878, 36531211111227462
+zero, 1127397, 1127397, 0, 16765, 11.0, 15.0, 22.0, 181.0, 247.0, 1761045897, 36531256424024541
+zero, 1251283, 1251283, 0, 18237, 11.0, 15.0, 21.0, 187.0, 249.0, 1761045914, 36531302554726038
+zero, 1375874, 1375874, 0, 20535, 12.0, 15.0, 19.0, 199.0, 255.0, 1761045933, 36531349070270631
+zero, 1501293, 1501293, 0, 22128, 12.0, 15.0, 20.0, 209.0, 261.0, 1761045948, 36531396247339920
+zero, 1624878, 1624878, 0, 24500, 12.0, 15.0, 20.0, 202.0, 263.0, 1761045973, 36531444493003389
+zero, 1751480, 1751480, 0, 26450, 12.0, 16.0, 20.0, 211.0, 271.0, 1761045994, 36531493291495044
+zero, 1875256, 1875256, 0, 29105, 13.0, 16.0, 21.0, 212.0, 267.0, 1761046012, 36531542277199164
+zero, 1999076, 1999076, 0, 32124, 13.0, 17.0, 22.0, 222.0, 271.0, 1761046031, 36531592119048834
+zero, 2123854, 2123854, 0, 35006, 14.0, 18.0, 32.0, 240.0, 326.0, 1761046053, 36531642501831795
+zero, 2249592, 2249592, 0, 35711, 14.0, 18.0, 25.0, 262.0, 351.0, 1761046074, 36531693700787715
+zero, 2371397, 2371397, 0, 40311, 15.0, 19.0, 28.0, 230.0, 381.0, 1761046093, 36531745587180882
+zero, 2496908, 2496908, 0, 44641, 16.0, 22.0, 80.0, 266.0, 416.0, 1761046115, 36531798192133632
 """
 
-# Read CSV with skipinitialspace to trim leading spaces in column names
-df = pd.read_csv(StringIO(csv_data), skipinitialspace=True)
+# --------- parameters ----------
+average_pkt_size_bytes = 52  # default payload size is 24 bytes + UDP header (8 bytes) + IP header (20 bytes)
 
-# Now 'Start' column exists without leading space
-df['time']       = pd.to_datetime(df['Start'], unit='s')
-df['delta_pkt']  = df['Actual'].diff()
-df['delta_time'] = df['time'].diff().dt.total_seconds()
-df['pps']        = df['delta_pkt'] / df['delta_time']
-df = df.dropna(subset=['pps']).reset_index(drop=True)
+# --------- load & preprocess ----------
+df = pd.read_csv(StringIO(csv_data.strip()), skipinitialspace=True)
+df['time'] = pd.to_datetime(df['Start'], unit='s')
 
-t0 = df['time'].iloc[0]
-df['minutes'] = ((df['time'] - t0).dt.total_seconds() / 60).round(1)
+df['delta_actual'] = df['Target'].diff()
+df['delta_time_s'] = df['time'].diff().dt.total_seconds()
+df['throughput_pps'] = df['delta_actual'] / df['delta_time_s']
 
-# Convert to Mbit/s
-avg_pkt_bytes = 52
-df['Mbps'] = df['pps'] * avg_pkt_bytes * 8 / 1e6
+plot_df = df.dropna(subset=['throughput_pps']).copy()
+t0 = plot_df['time'].iloc[0]
+plot_df['minutes'] = (
+    (plot_df['time'] - t0).dt.total_seconds() / 60
+).round(1)  # minutes since start
 
-# Bar width for throughput
-gap      = 0.4
-min_step = df['minutes'].diff().min()
-bw2      = gap * min_step
+# ---- convert to networking-friendly units ----
+plot_df['throughput_Mbps'] = plot_df['throughput_pps'] * average_pkt_size_bytes * 8 / 1e6
 
-# ——— Create 2-row figure with shared X ———
-fig, (ax1, ax2) = plt.subplots(
-    nrows=2,
-    ncols=1,
-    sharex=True,
-    figsize=(11, 10),
+# --- plotting with gaps between bars ---
+gap_factor = 0.7               # 0 = hair-thin bars, 1 = bars touch
+min_step   = plot_df['minutes'].diff().min()
+bar_width  = gap_factor * min_step        # 60 % of the smallest interval
+
+# smooth Mbps as before
+plot_df['throughput_Mbps_sm'] = (
+    plot_df['throughput_Mbps']
+    .rolling(window=3, min_periods=1, center=True)
+    .mean()
 )
 
-# --- Top: CPU & Packets ---
-bars = ax1.bar(
-    times_cpu, cpu_usage,
+# --------- plotting with dual Y axis ----------
+fig, ax1 = plt.subplots(figsize=(11, 8))
+
+# Bars in Mbits/s (left axis) – same visual style as your first script
+ax1.bar(
+    plot_df['minutes'],
+    plot_df['throughput_Mbps_sm'],
     width=bar_width,
-    color='skyblue',
-    label='CPU Usage (%)'
+    align='center'
 )
-ax1.set_ylabel('CPU Usage (%)')
-ax1.tick_params(labelbottom=False)  # hide X labels here
+ax1.set_xlabel('Time (minutes)')
+ax1.set_ylabel('Throughput (Mbits/s)')
+ax1.set_title('')
+ax1.set_xticks(plot_df['minutes'].round(2))
 
-ax1b = ax1.twinx()
-line_pkts, = ax1b.plot(
-    times_pkts, packets_processed,
-    marker='o', color='orange',
-    label='Packets Processed'
-)
-ax1b.set_ylabel('Packets')
+# two-iok: copilot - only show every other x label to avoid crowding
+xtick_labels = [str(x) if i % 2 == 0 else "" for i, x in enumerate(plot_df['minutes'].round(2))]
+ax1.set_xticklabels(xtick_labels)
 
-# Legend inside top-left
-handles = [bars, line_pkts]
-labels  = ['CPU Usage (%)','Packets Processed']
-ax1.legend(handles, labels, loc='upper left')
+# Right Y axis in packets per second (pps), sharing the same underlying data
+ax2 = ax1.twinx()
+ax2.set_ylabel('Packets per second (pps)')
 
-# --- Bottom: Throughput Mbit/s ---
-ax2.bar(
-    df['minutes'], df['Mbps'],
-    width=bw2,
-    align='center',
-    color='tab:green'
-)
-ax2.set_xlabel('Time (minutes)')
-ax2.set_ylabel('Throughput (Mbit/s)')
+# Conversion: Mbps -> pps
+# Mbps = pps * (bytes_per_pkt * 8) / 1e6
+# => pps = Mbps * 1e6 / (bytes_per_pkt * 8)
+conversion_factor = 1e6 / (average_pkt_size_bytes * 8)
 
-plt.tight_layout()
-plt.savefig("combined_two_plots.pdf")
+ymin, ymax = ax1.get_ylim()
+ax2.set_ylim(ymin * conversion_factor, ymax * conversion_factor)
+
+fig.tight_layout()
+
+# Save the plot to a file
+plt.savefig("throughput_tangle_combined_mbps_pps.pdf")
+plt.show()

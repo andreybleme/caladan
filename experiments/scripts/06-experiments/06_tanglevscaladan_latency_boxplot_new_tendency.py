@@ -1,16 +1,20 @@
 import pandas as pd
+import numpy as np
 import matplotlib.pyplot as plt
 from io import StringIO
+from matplotlib.lines import Line2D
 
-plt.rcParams['font.size'] = 30
-# plt.rcParams['axes.titlesize'] = 26
-# plt.rcParams['axes.labelsize'] = 26
-# plt.rcParams['legend.fontsize'] = 24
-# plt.rcParams['xtick.labelsize'] = 24
-# plt.rcParams['ytick.labelsize'] = 24
+plt.rcParams['font.size'] = 26
+plt.rcParams['axes.titlesize'] = 26
+plt.rcParams['axes.labelsize'] = 26
+plt.rcParams['legend.fontsize'] = 28
+plt.rcParams['xtick.labelsize'] = 20
+plt.rcParams['ytick.labelsize'] = 24
 
-# Log data as a multiline string
-log_data = """
+# -----------------------------
+# Input data
+# -----------------------------
+caladan_log_data = """
 Distribution, Target, Actual, Dropped, Never Sent, Median, 90th, 99th, 99.9th, 99.99th, Start, StartTsc
 zero, 129567, 129567, 0, 7201, 12.0, 18.0, 22.0, 169.0, 238.0, 1744810262, 4517905260852237
 zero, 254181, 254181, 0, 9251, 11.0, 15.0, 21.0, 170.0, 237.0, 1744810283, 4517955449645319
@@ -58,46 +62,145 @@ zero, 2371367, 2371367, 0, 40311, 15.0, 19.0, 28.0, 230.0, 381.0, 1761046102, 36
 zero, 2496508, 2496508, 0, 44641, 16.0, 22.0, 80.0, 266.0, 416.0, 1761046124, 36531798192133632
 """
 
-# Read the log data into a pandas DataFrame.
-# skipinitialspace=True helps to trim extra spaces after commas.
-df = pd.read_csv(StringIO(log_data), skipinitialspace=True)
-df_tangle = pd.read_csv(StringIO(log_data_tangle), skipinitialspace=True)
+# -----------------------------
+# Helpers
+# -----------------------------
+def load_df(csv_text):
+    df = pd.read_csv(StringIO(csv_text.strip()), skipinitialspace=True)
+    df.columns = df.columns.str.strip()
 
-# Clean up the header names by stripping any extra whitespace.
-df.columns = [col.strip() for col in df.columns]
+    numeric_cols = [
+        "Target", "Actual", "Dropped", "Never Sent",
+        "Median", "90th", "99th", "99.9th", "99.99th"
+    ]
 
-# Convert relevant columns from strings to numeric types.
-df['Target'] = pd.to_numeric(df['Target'], errors='coerce')
-df['99.9th'] = pd.to_numeric(df['99.9th'], errors='coerce')
-df['99.99th'] = pd.to_numeric(df['99.99th'], errors='coerce')
-df_tangle['99.9th'] = pd.to_numeric(df_tangle['99.9th'], errors='coerce')
-df_tangle['99.99th'] = pd.to_numeric(df_tangle['99.99th'], errors='coerce')
+    for c in numeric_cols:
+        if c not in df.columns:
+            raise ValueError(f"Column '{c}' not found. Parsed columns: {list(df.columns)}")
+        df[c] = pd.to_numeric(df[c], errors="coerce")
 
-# Set up the figure
-plt.figure(figsize=(11, 8))
+    df["packets_millions"] = df["Actual"] / 1_000_000.0
+    return df.sort_values("packets_millions").reset_index(drop=True)
 
-# Plot the percentiles versus the number of packets processed (Target)
-# ====== p99.99th percentile here ======
-# plt.plot(df['Target'], df['99.99th'], color='red', marker='^', linestyle='-', label='Caladan')
-# plt.plot(df_tangle['Target'], df_tangle['99.99th'], color='blue', marker='o', linestyle='--', label='Tangle')
-# ====== p99.9th percentile here ======
-plt.plot(df['Target'], df['99.9th'], color='orange', marker='^', linestyle='-', label='Caladan')
-plt.plot(df_tangle['Target'], df_tangle['99.9th'], color='green', marker='o', linestyle='--', label='Tangle')
 
-# Labeling the plot
-plt.xlabel("Number of Packets (millions)")
-plt.ylabel("Latency (μs)")
-plt.title("")
-plt.legend(fontsize=38)
-plt.grid(True)
+def add_trendline(ax, x, y, color, linestyle='-', linewidth=2.5, alpha=0.9):
+    coeffs = np.polyfit(x, y, deg=1)
+    poly = np.poly1d(coeffs)
 
-# Disable scientific notation on the x-axis to remove the "1e6" offset notation.
-# plt.ticklabel_format(style="sci", axis="x")
+    x_line = np.linspace(x.min(), x.max(), 200)
+    y_line = poly(x_line)
 
-# Save the plot to a file
-plt.savefig("latency_caladanvstangle_99d9.pdf")
+    ax.plot(
+        x_line,
+        y_line,
+        color=color,
+        linestyle=linestyle,
+        linewidth=linewidth,
+        alpha=alpha,
+        zorder=2
+    )
 
-# caladan: 25251508 hashtable reads, 3931051452 cycles, 1.61 seconds
-# tangle:  1 hashtable read = 3231 cycles, 1.35 µs
-# hz 2400000000
+
+# -----------------------------
+# Load data
+# -----------------------------
+df_caladan = load_df(caladan_log_data)
+df_tangle = load_df(log_data_tangle)
+
+# Use only the "last point" of each load level: 99.99th percentile
+x_caladan = df_caladan["packets_millions"].to_numpy()
+y_caladan = df_caladan["99.99th"].to_numpy()
+
+x_tangle = df_tangle["packets_millions"].to_numpy()
+y_tangle = df_tangle["99.99th"].to_numpy()
+
+# Small overall offset so the two systems do not overlap perfectly
+offset = 0.012
+x_caladan_plot = x_caladan - offset
+x_tangle_plot = x_tangle + offset
+
+# Colors
+caladan_face = "red"
+caladan_edge = "red"
+tangle_face = "blue"
+tangle_edge = "blue"
+
+# -----------------------------
+# Plot
+# -----------------------------
+fig, ax = plt.subplots(figsize=(18, 9))
+
+# Trend lines
+add_trendline(ax, x_caladan, y_caladan, color=caladan_edge, linestyle='-', linewidth=2.8, alpha=0.85)
+add_trendline(ax, x_tangle, y_tangle, color=tangle_edge, linestyle='-', linewidth=2.8, alpha=0.85)
+
+# Last points only
+ax.scatter(
+    x_caladan_plot,
+    y_caladan,
+    s=90,
+    marker='X',
+    facecolors=caladan_face,
+    edgecolors=caladan_edge,
+    linewidths=1.0,
+    alpha=0.85,
+    zorder=3
+)
+
+ax.scatter(
+    x_tangle_plot,
+    y_tangle,
+    s=90,
+    marker='o',
+    facecolors=tangle_face,
+    edgecolors=tangle_edge,
+    linewidths=1.0,
+    alpha=0.85,
+    zorder=3
+)
+
+# X ticks
+all_x = sorted(set(round(x, 1) for x in (
+    df_caladan["packets_millions"].tolist() + df_tangle["packets_millions"].tolist()
+)))
+ax.set_xticks(all_x)
+ax.set_xticklabels([f"{x:.1f}" for x in all_x], rotation=45)
+
+ax.set_xlabel("Number of packets (millions)")
+ax.set_ylabel("Latency (microseconds)")
+ax.grid(axis="y", linestyle="--", alpha=0.4)
+
+legend_handles = [
+    Line2D(
+        [0], [0],
+        marker='X',
+        linestyle='-',
+        color=caladan_edge,
+        markerfacecolor=caladan_face,
+        markeredgecolor=caladan_edge,
+        markeredgewidth=1.0,
+        markersize=10,
+        linewidth=2.5,
+        label='Caladan'
+    ),
+    Line2D(
+        [0], [0],
+        marker='o',
+        linestyle='-',
+        color=tangle_edge,
+        markerfacecolor=tangle_face,
+        markeredgecolor=tangle_edge,
+        markeredgewidth=1.0,
+        markersize=10,
+        linewidth=2.5,
+        label='Tangle'
+    ),
+]
+ax.legend(handles=legend_handles, loc="upper left")
+
+ax.set_xlim(0.05, 2.60)
+ax.set_ylim(bottom=0)
+
+plt.tight_layout()
+plt.savefig("latency_last_point_trendline_tangle_vs_caladan.pdf", dpi=300, bbox_inches="tight")
 plt.show()

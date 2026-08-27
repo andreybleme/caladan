@@ -2,14 +2,18 @@ import pandas as pd
 import matplotlib.pyplot as plt
 from io import StringIO
 
+# -----------------------------
+# Matplotlib style (thesis-friendly)
+# -----------------------------
 plt.rcParams['font.size'] = 24
 plt.rcParams['axes.titlesize'] = 26
 plt.rcParams['axes.labelsize'] = 26
-plt.rcParams['legend.fontsize'] = 24
 plt.rcParams['xtick.labelsize'] = 24
 plt.rcParams['ytick.labelsize'] = 24
 
-# === 1) Embedded log data ===
+# -----------------------------
+# Embedded CSV data
+# -----------------------------
 tangle_csv = """Time,  %CPU,  %MEM
 2025-05-03T12:18:32,   7.1,   0.0
 2025-05-03T12:18:32,  19.1,   0.0
@@ -97,34 +101,26 @@ caladan_csv = """Time,  %CPU,  %MEM
 2025-05-03T13:23:54,  89.3,   0.0
 """
 
-# === 2) Read into DataFrames, stripping extra spaces ===
-df_tangle = pd.read_csv(StringIO(tangle_csv),
-                        parse_dates=['Time'],
-                        skipinitialspace=True)
-df_caladan = pd.read_csv(StringIO(caladan_csv),
-                         parse_dates=['Time'],
-                         skipinitialspace=True)
+# -----------------------------
+# Load data
+# -----------------------------
+df_tangle = pd.read_csv(StringIO(tangle_csv), skipinitialspace=True)
+df_caladan = pd.read_csv(StringIO(caladan_csv), skipinitialspace=True)
 
-# === 3) Compute average CPU usage ===
-avg_tangle = df_tangle['%CPU'].mean()
-avg_caladan = df_caladan['%CPU'].mean()
+# -----------------------------
+# Boxplot
+# -----------------------------
+plt.figure(figsize=(6, 4))
+plt.boxplot(
+    [df_caladan['%CPU'], df_tangle['%CPU']],
+    labels=['Caladan', 'Tangle'],
+    showfliers=False
+)
 
-# === 4) Build summary and plot ===
-summary = pd.DataFrame({
-    'System': ['Caladan', 'Tangle'],
-    'Average_CPU_%': [avg_caladan, avg_tangle]
-})
-
-fig, ax = plt.subplots(figsize=(6, 4))
-ax.bar(summary['System'], summary['Average_CPU_%'], color=['#1f77b4', '#ff7f0e'], edgecolor='k')
-ax.set_ylim(0, 100)
-ax.set_ylabel('Average CPU Usage (%)')
-# ax.set_title('Caladan vs Tangle: Average CPU')
-
-# Annotate bars
-for idx, val in enumerate(summary['Average_CPU_%']):
-    ax.text(idx, val + 1, f'{val:.1f}%', ha='center')
-
-plt.savefig("tanglevscaladan_cpu_average.pdf")
+plt.ylabel('CPU Usage (%)')
+plt.ylim(0, 100)
 plt.tight_layout()
+
+# Save to artifacts
+plt.savefig("tanglevscaladan_cpu_boxplot.pdf")
 plt.show()

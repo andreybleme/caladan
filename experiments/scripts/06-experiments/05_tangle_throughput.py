@@ -102,3 +102,4 @@ plt.tight_layout()
 
 # Save the plot to a file
 plt.savefig("throughput_tangle_mbps.pdf")
+plt.show()

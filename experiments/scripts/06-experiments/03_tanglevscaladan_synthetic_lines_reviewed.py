@@ -65,37 +65,59 @@ df_tangle = pd.read_csv(StringIO(log_data_tangle), skipinitialspace=True)
 
 # Clean up the header names by stripping any extra whitespace.
 df.columns = [col.strip() for col in df.columns]
+df_tangle.columns = [col.strip() for col in df_tangle.columns]
 
 # Convert relevant columns from strings to numeric types.
 df['Target'] = pd.to_numeric(df['Target'], errors='coerce')
 df['99.9th'] = pd.to_numeric(df['99.9th'], errors='coerce')
 df['99.99th'] = pd.to_numeric(df['99.99th'], errors='coerce')
+df['Never Sent'] = pd.to_numeric(df['Never Sent'], errors='coerce')
+
+df_tangle['Target'] = pd.to_numeric(df_tangle['Target'], errors='coerce')
 df_tangle['99.9th'] = pd.to_numeric(df_tangle['99.9th'], errors='coerce')
 df_tangle['99.99th'] = pd.to_numeric(df_tangle['99.99th'], errors='coerce')
+df_tangle['Never Sent'] = pd.to_numeric(df_tangle['Never Sent'], errors='coerce')
 
 # Set up the figure
-plt.figure(figsize=(11, 8))
+fig, ax1 = plt.subplots(figsize=(11, 8))
 
 # Plot the percentiles versus the number of packets processed (Target)
 # ====== p99.99th percentile here ======
-# plt.plot(df['Target'], df['99.99th'], color='red', marker='^', linestyle='-', label='Caladan')
-# plt.plot(df_tangle['Target'], df_tangle['99.99th'], color='blue', marker='o', linestyle='--', label='Tangle')
+# ax1.plot(df['Target'], df['99.99th'], color='red', marker='^', linestyle='-', label='Caladan')
+# ax1.plot(df_tangle['Target'], df_tangle['99.99th'], color='blue', marker='o', linestyle='--', label='Tangle')
 # ====== p99.9th percentile here ======
-plt.plot(df['Target'], df['99.9th'], color='orange', marker='^', linestyle='-', label='Caladan')
-plt.plot(df_tangle['Target'], df_tangle['99.9th'], color='green', marker='o', linestyle='--', label='Tangle')
+ax1.plot(df['Target'], df['99.9th'], color='orange', marker='^', linestyle='-', label='Caladan')
+ax1.plot(df_tangle['Target'], df_tangle['99.9th'], color='green', marker='o', linestyle='--', label='Tangle')
 
 # Labeling the plot
-plt.xlabel("Number of Packets (millions)")
-plt.ylabel("Latency (μs)")
-plt.title("")
-plt.legend(fontsize=38)
-plt.grid(True)
+ax1.set_xlabel("Number of Packets (millions)")
+ax1.set_ylabel("Latency (μs)")
+ax1.set_title("")
+ax1.grid(True)
+
+# Plot Never Sent on the right Y axis
+ax2 = ax1.twinx()
+ax2.plot(
+    df_tangle['Target'],
+    df_tangle['Never Sent'],
+    color='gray',
+    alpha=0.45,
+    marker='x',
+    linestyle='-',
+    label='Tangle Never Sent'
+)
+ax2.set_ylabel("Never Sent Packets")
+
+# Combined legend
+lines_1, labels_1 = ax1.get_legend_handles_labels()
+lines_2, labels_2 = ax2.get_legend_handles_labels()
+ax1.legend(lines_1 + lines_2, labels_1 + labels_2, fontsize=38)
 
 # Disable scientific notation on the x-axis to remove the "1e6" offset notation.
 # plt.ticklabel_format(style="sci", axis="x")
 
 # Save the plot to a file
-plt.savefig("latency_caladanvstangle_99d9.pdf")
+plt.savefig("latency_caladanvstangle_99d9_reviewed.pdf")
 
 # caladan: 25251508 hashtable reads, 3931051452 cycles, 1.61 seconds
 # tangle:  1 hashtable read = 3231 cycles, 1.35 µs
